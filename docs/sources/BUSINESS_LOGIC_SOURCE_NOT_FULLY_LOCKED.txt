@@ -1,0 +1,337 @@
+**Aksi kamu:** jawab U1–U4 di bagian akhir (wajib). Untuk U5–U11 cukup tulis "OK" atau bantah per nomor.
+
+**Tiga revisi dari analisis saya sebelumnya** (ini hasil tahap ini, bukan perubahan diam-diam):
+- **R1.** Modal terjual memakai **rata-rata bergerak**, bukan FIFO. Sistem tidak tahu kapan unit terjual di dalam satu interval cek, jadi akurasi FIFO semu. Rata-rata lebih sederhana dan mudah diaudit.
+- **R2.** Saran saya "default belanja = uang toko" salah arah. Contoh master Rp2.850.000 tidak mengurangi belanja. Bagian 17 menggantinya dengan "tanya sekali".
+- **R3.** Tutup periode tidak lagi wajib cek semua produk. Ini sesuai instruksi G kamu dan menggantikan saran K5 saya.
+
+Tahap ini murni desain (superpowers). Tidak ada kode, UI, atau schema. Ini belum PRD final.
+
+---
+
+# BUSINESS LOGIC LOCK v1
+
+## Fondasi (berlaku untuk semua bagian)
+
+1. **Kejadian bersifat append-only.** Edit berarti versi baru, hapus berarti void. Tidak ada yang tertimpa.
+2. **Semua angka turunan.** Hanya kejadian dan riwayat harga yang disimpan. Angka lain dihitung engine.
+3. **Setiap angka membawa kepastian:** Pasti, Perlu Diperiksa, atau Belum Diketahui.
+4. **Uang dihitung kumulatif.** Periode hanyalah jendela laporan.
+
+**Peta kejadian ke tiga dunia**
+
+| Kejadian | BARANG | HASIL | UANG |
+|---|---|---|---|
+| Belanja | masuk | tidak ada (bukan biaya) | keluar, hanya jika sumbernya uang toko |
+| Cek sisa | pengamatan | penjualan dan modal terjual (turunan) | masuk (penjualan, turunan) |
+| Rusak | keluar | kerugian rusak | tidak ada |
+| Dipakai | keluar | barang dipakai | tidak ada |
+| Pengeluaran | tidak ada | biaya | keluar, hanya jika sumbernya uang toko |
+| Pendapatan lain | tidak ada | pendapatan | masuk |
+| Setoran | tidak ada | tidak ada | keluar |
+| Koreksi | tergantung jenisnya | tergantung jenisnya | tergantung jenisnya |
+
+**Bukti LABA ≠ UANG ≠ SETORAN (data golden, awal nol)**
+- Belanja Rp288.000, sisa 25 pcs, terjual 47.
+- Laba barang = 329.000 − 188.000 = **Rp141.000**.
+- Sisa 25 pcs masih menahan modal Rp100.000.
+- Uang seharusnya jika belanja dari uang toko = 329.000 − 288.000 = **Rp41.000**. Itu sama dengan laba 141.000 dikurangi modal tertahan 100.000.
+- Uang seharusnya jika belanja dari uang pribadi = **Rp329.000**.
+- Setoran adalah angka yang benar-benar diserahkan, bisa berbeda dari keduanya.
+
+---
+
+## 1. DEFINISI RESMI
+
+- **Stok:** jumlah fisik dalam satuan dasar (pcs).
+- **Tersedia:** sisa cek terakhir + masuk − keluar tercatat sejak itu. Artinya stok jika belum ada yang terjual.
+- **Terjual:** tersedia − sisa baru. Dihitung sistem, hanya jika wajar.
+- **Penjualan:** terjual × harga jual yang berlaku.
+- **Modal barang terjual:** nilai modal unit terjual (rata-rata bergerak).
+- **Untung** = penjualan + pendapatan lain − modal terjual − kerugian rusak − barang dipakai − selisih barang − pengeluaran toko.
+- **Uang toko** = uang masuk − uang keluar − setoran, kumulatif sejak mulai.
+- **Uang seharusnya** = uang toko sebelum setoran.
+- **Setoran:** uang aktual yang diserahkan.
+- **Selisih** = setoran − uang seharusnya. Negatif berarti kurang. Contoh kamu: −Rp50.000.
+- **Periode Setoran:** jendela Senin–Minggu (WIB) untuk laporan.
+
+**Analisis formula Uang Toko.** Rumusan kamu benar, dengan empat syarat:
+1. Semua penjualan benar-benar menjadi uang toko. Ini U2.
+2. Hanya uang keluar yang bersumber toko yang dikurangkan. Ini U1.
+3. Penjualan adalah perkiraan dari cek sisa, jadi kepastiannya ikut.
+4. Hitungannya kumulatif, tidak per periode.
+
+Formula salah jika ada QRIS yang belum disetor, piutang pelanggan, belanja tanpa sumber, atau produk yang belum dicek.
+
+## 2. MODEL BARANG
+- **Def:** buku stok per produk dalam satuan dasar, plus pengamatan cek sisa.
+- **Input:** belanja, rusak, dipakai, cek sisa, koreksi.
+- **Proses:** keadaan per produk adalah {jumlah, nilai modal}. Masuk menambah keduanya. Keluar mengurangi nilai sebesar jumlah × (nilai ÷ jumlah), dibulatkan ke rupiah. Sisa pembulatan tetap di nilai, jadi tidak ada kebocoran.
+- **Output:** stok, nilai persediaan, status cek.
+- **Dampak:** B ubah. H dan U lewat bagian lain.
+- **Edge:** keluar eksplisit lebih besar dari tersedia menandakan belanja belum dicatat, jadi Perlu Diperiksa.
+- **Konflik:** tidak ada.
+- **Kunci:** hukum kekekalan. Setiap unit masuk berakhir di tepat satu tempat: stok, terjual, rusak, dipakai, atau selisih barang. Nilai modal mengikuti.
+
+## 3. MODEL HASIL
+- **Def:** untung dengan rumus bagian 1.
+- **Proses:** penjualan dan modal terjual masuk saat cek sisa (dasar checkpoint). Pengeluaran masuk saat dicatat. Belanja bukan biaya.
+- **Output:** untung per periode, dengan penanda "belum termasuk N barang belum dicek".
+- **Edge:** unit yang belum dicek tidak masuk angka Pasti.
+- **Konflik:** laba bergeser antar periode jika cek terlambat. Itu dibuka apa adanya.
+- **Kunci:** total tidak pernah memuat perkiraan. Perkiraan hanya tampil terpisah dan berlabel.
+
+## 4. MODEL UANG
+- **Def:** buku kas tunggal kumulatif.
+- **Masuk:** penjualan (turunan) dan pendapatan lain. **Keluar:** belanja dan pengeluaran yang sumbernya toko, serta setoran.
+- **Proses:** saldo tidak pernah di-reset per periode.
+- **Edge:** saldo negatif di tengah periode **bukan error**, karena penjualan baru terbaca saat cek sisa. Hanya dievaluasi saat setoran.
+- **Kunci:** satu rumus kas. Barang rusak, dipakai, dan modal terjual tidak menyentuh kas.
+
+## 5. MODEL SETORAN
+- **Def:** uang aktual yang diserahkan. Boleh beberapa kali dalam satu periode (dijumlah).
+- **Input:** "Setor 2 juta 850" dan tanggal.
+- **Proses:** setoran menunjuk periode target. Default: periode terbuka tertua.
+- **Status:**
+  - 🟢 **COCOK:** selisih nol dan semua komponen uang Pasti.
+  - 🟡 **PERLU DIPERIKSA:** ada selisih atau data tak pasti, dan sistem punya penjelasan kandidat. Atau selisih nol tapi masih ada data tak pasti.
+  - 🔴 **BELUM COCOK:** ada selisih padahal semua komponen Pasti. Sistem tidak punya penjelasan.
+  - **Menunggu setoran:** setoran belum dicatat. Ini bukan status cocok.
+- **Penyebab kandidat (netral, tanpa tuduhan):** barang belum dicek, harga jual berubah, sumber belanja belum dipilih, pengeluaran atau rusak mungkin belum dicatat, setoran dicatat di periode lain.
+- **Konflik:** contoh kamu (−Rp50.000 = PERLU DIPERIKSA) berlaku jika masih ada data tak pasti. Jika semua Pasti, hasilnya BELUM COCOK. Ini U4.
+- **Kunci:** sistem hanya berkata "ada selisih". Tidak pernah menyebut hilang atau diambil.
+
+## 6. MODEL PERIODE
+- **Def:** jendela kalender Senin–Minggu, WIB. 5–11 Oktober 2026 memang Senin–Minggu.
+- **Proses:** kejadian masuk periode berdasarkan tanggal kejadian. Restock tidak berpengaruh pada periode.
+- **Status:** Terbuka, Ditutup Lengkap, atau Ditutup Sebagian.
+- **Edge:** interval cek yang melewati batas periode dicatat di periode tempat cek penutupnya berada (dasar checkpoint). Ini tidak mengarang pembagian waktu.
+- **Konflik:** laba bergeser antar periode (lihat bagian 3). Uang tidak bergeser karena kumulatif.
+- **Kunci:** hari mulai minggu dan batas jam adalah U11.
+
+## 7. STOK AWAL
+- **Def:** pengamatan pertama sebuah produk. Di UI cukup disebut "Cek Sisa".
+- **Input:** "Berapa stok sekarang?" per produk, plus modal per pcs (opsional).
+- **Proses:** tidak menghitung penjualan karena belum ada acuan.
+- **Edge:** modal tidak diisi. Gunakan estimasi dari pembelian pertama berikutnya (Perlu Diperiksa). Sebelum itu, laba bagian ini Belum Diketahui.
+- **Kunci:** U8.
+
+## 8. STOCK CHECK
+- **Def:** pengamatan fisik pada waktu t.
+- **Proses:** tersedia dihitung dari pengamatan sebelumnya. Hasil:
+  1. **0 ≤ terjual ≤ tersedia:** otomatis dianggap terjual (Aturan 03). Tanpa pertanyaan.
+  2. **Terjual < 0** (sisa lebih besar dari tersedia): mustahil, jadi PERLU DIPERIKSA. Tidak dibuat penjualan negatif. Pilihannya: "Ada belanja belum dicatat" (buka Belanja terisi selisihnya), "Salah hitung" (ubah angka), "Tidak tahu" (dicatat sebagai selisih barang, bernilai modal rata-rata dan Perlu Diperiksa).
+  3. **Penurunan jauh di luar pola** (hanya jika riwayat cukup): catatan lunak "Biasanya 18–22." Ada tautan "Ada yang rusak atau dipakai?" yang membelah angka.
+- **Lima pilihan penyebab:** Terjual (konfirmasi), Rusak (jumlah), Dipakai (jumlah), Salah hitung (ubah), Tidak tahu. "Tidak tahu" untuk penurunan menjadi **selisih barang**: H berkurang sebesar modal, U tidak berubah, dan ditandai.
+- **Status produk:** SUDAH DICEK (ada pengamatan pada tanggal acuan), BELUM DICEK, PERLU DIPERIKSA.
+- **Edge:** cek ganda dalam satu waktu ditolak lewat kunci idempotensi. Sisa 0 dengan tersedia > 0 tetap valid.
+- **Kunci:** satu pertanyaan per produk, hanya bila ditandai. Ambang "riwayat cukup" adalah angka konfigurasi (belum dikalibrasi).
+
+## 9. RESTOCK
+- **Proses:** belanja menambah jumlah dan nilai pada keadaan produk. Tidak ada periode baru.
+- **Contoh:** Senin beli 20 @4.000, Kamis restock 20 @4.200, Minggu sisa 5. Terjual = 20 + 20 − 5 = 35. Rata-rata = 164.000 ÷ 40 = 4.100. Modal terjual = 143.500. Nilai sisa = 20.500 (5 × 4.100).
+- **Dampak:** B bertambah, H tidak berubah, U berkurang hanya bila sumbernya toko.
+- **Edge:** "habis di Kamis" tidak diwajibkan. Cek 0 di Kamis hanya menambah ketepatan.
+- **Kunci:** R1 (rata-rata, bukan FIFO).
+
+## 10. BARANG RUSAK
+- **Def:** satu kejadian, satu sumber kebenaran. Gerak stok keluar.
+- **Proses:** nilai kerugian dihitung engine dari rata-rata modal saat itu. Tidak ada angka kerugian tersimpan terpisah.
+- **Dampak:** B berkurang, H turun sebesar modal, U tidak berubah.
+- **Anti-ganda:** rusak mengurangi tersedia, jadi terjual mengecil dengan jumlah yang sama. Unit itu pindah dari "terjual" ke "rusak", tidak terhitung dua kali.
+- **Edge:** rusak dicatat setelah cek sisa (tanggal mundur). Interval dihitung ulang, dan sistem memberi tahu bahwa penjualan berkurang.
+- **Edge:** rusak dicatat setelah periode ditutup. Jadi koreksi (bagian 20).
+
+## 11. PENGELUARAN
+- **Def:** biaya operasional, bukan barang dagangan.
+- **Aturan klasifikasi:** jika barang ada di master produk, ia belanja. Jika tidak, ia pengeluaran. Jika ambigu, tanya satu kali dan ingat jawabannya.
+- **Dampak:** B tidak ada, H turun, U turun hanya bila sumbernya toko.
+- **Edge:** pembelian ganda (dicatat sebagai belanja dan pengeluaran). Dideteksi lewat jumlah dan tanggal yang sama.
+
+## 12. PENDAPATAN LAIN
+- **Def:** pendapatan di luar penjualan barang.
+- **Dampak:** B tidak ada, H naik, U naik.
+- **Edge:** "minggu ini 35 ribu" memakai tanggal pencatatan dan periode berjalan.
+- **Kunci:** klasifikasi terpisah dari penjualan produk. Asumsi uangnya masuk toko (U2).
+
+## 13. HARGA BELI
+- **Def:** catatan belanja tak berubah: tanggal, kemasan, isi, jumlah, harga.
+- **Proses:** modal efektif per pcs = total ÷ pcs, disimpan sebagai total dan pcs. Per-pcs hanya untuk tampilan.
+- **Output:** insight "harga beli naik" saat modal per pcs berubah dari pembelian sebelumnya.
+- **Kunci:** harga lama tidak pernah ditimpa. Rata-rata hanya turunan.
+
+## 14. HARGA JUAL
+- **Def:** riwayat dengan waktu mulai berlaku.
+- **Proses:** penjualan interval = terjual × harga yang berlaku selama interval itu. Jika harga berubah di dalam interval, lihat bagian 16.
+- **Edge:** diskon dan promo di luar sistem akan muncul sebagai selisih setoran. Ini sengaja.
+- **Kunci:** harga baru tidak menyentuh laporan lama.
+
+## 15. PERUBAHAN ISI KEMASAN
+- **Contoh:** 40 pcs → 36 pcs dengan Rp120.000. Modal per pcs 3.000 → 3.333,33.
+- **Proses:** bagian dari catatan belanja. Rata-rata bergerak menyatukan stok campuran.
+- **Output:** insight "Isi dus berubah dari 40 menjadi 36 pcs. Modal per pcs sekarang lebih tinggi."
+- **Edge:** pembulatan lewat total dan pcs, bukan per pcs (aturan bagian 2).
+
+## 16. PERUBAHAN HARGA JUAL DI TENGAH PERIODE
+**Algoritma (ASK ONLY WHEN MATHEMATICALLY NECESSARY)**
+1. Harga baru produk X berlaku di waktu t.
+2. Tanya hanya jika semua syarat ini benar: ada interval terbuka (cek terakhir < t), penjualan mungkin terjadi di interval itu (tersedia > 0 atau ada masuk), dan t berbeda dari waktu cek terakhir.
+3. Jika perlu, tampilkan: "Supaya penjualan sebelum dan sesudah perubahan tetap tepat, cek sisa sekarang?" dengan [Cek sisa] dan [Nanti]. Satu angka saja.
+4. Jawab Cek sisa: ada checkpoint di t, dua interval tepat. Selesai.
+5. Jawab Nanti: harga tetap berlaku mulai t, interval ditandai "harga campuran", penjualan dihitung sebagai **kisaran** [terjual × harga terendah, terjual × harga tertinggi]. Kepastian Perlu Diperiksa, dan uang seharusnya ikut kisaran.
+6. Cek sisa berikutnya menawarkan opsional: "Kira-kira berapa yang terjual sebelum harga berubah?" Jika dijawab, interval dipecah dengan kepastian Perlu Diperiksa (angka "kira-kira").
+7. Jika syarat tidak terpenuhi, tidak ada pertanyaan.
+
+- **Dampak pada setoran:** setoran di dalam kisaran berstatus PERLU DIPERIKSA ("cocok untuk salah satu kemungkinan"), bukan COCOK.
+- **Kunci:** U3.
+
+## 17. PEMBELIAN: UANG TOKO VS UANG PRIBADI
+- **Def:** sumber uang menentukan apakah U berkurang.
+- **Mekanisme (terkunci):** pengaturan toko "Belanja biasanya dibayar pakai: [Uang toko] [Uang pribadi]". **Ditanya sekali**, di belanja pertama, di preview yang sama. Kejadian berikutnya hanya menampilkan chip kecil yang bisa diubah. Pengeluaran punya pengaturan terpisah dengan cara yang sama. AI memahami "pakai uang pribadi".
+- **Snapshot:** tiap kejadian menyimpan sumbernya saat dicatat. Mengganti pengaturan tidak mengubah sejarah.
+- **Sebelum dijawab:** uang seharusnya menampilkan "belum termasuk belanja Rp X (sumber belum dipilih)", kepastiannya Belum Diketahui.
+- **Konsekuensi salah default:** diam-diam "toko" saat sebenarnya pribadi membuat setoran terlihat **lebih** dan menutupi kekurangan nyata. Diam-diam "pribadi" saat sebenarnya toko membuat setoran terlihat **kurang** (alarm palsu). Kedua arah buruk, jadi tidak ada default diam-diam.
+- **Deteksi:** jika selisih berulang mendekati total belanja, sistem **menyarankan** (tidak mengubah) pengaturan.
+- **Kunci:** U1 (nilai awal). Bukti contoh master mengarah ke "pribadi", tapi itu fakta bisnis milikmu.
+
+## 18. SETORAN & REKONSILIASI
+- **Algoritma:** uang seharusnya = saldo bawaan + masuk − keluar (tanpa setoran). Selisih = setoran − seharusnya. Sistem menerbitkan status (bagian 5) dan penyebab kandidat.
+- **Bawaan:** selisih yang tidak diselesaikan **dibawa** ke periode berikut (bagian 19). Ini membuat selisih akibat waktu, seperti penjualan produk belum dicek, hilang sendiri saat dicek.
+- **Tidak ada fitur "uang pegangan"** (kembalian). Uang awal laci tidak pernah dicatat sebagai masuk, jadi tidak memengaruhi selisih.
+- **Edge:** setoran lebih. Penyebab kandidat adalah penjualan belum dicatat, pendapatan lain belum dicatat, atau sisa salah hitung.
+- **Dampak:** hanya U.
+
+## 19. TUTUP PERIODE
+1. **Siap ditutup:** tanggal akhir sudah lewat atau pengguna menekan "Tutup sekarang", **dan** setoran sudah dicatat atau dinyatakan "tidak ada setoran". Tidak ada syarat cek semua produk.
+2. **Produk belum dicek:** tidak memblokir. Daftar tampil di ringkasan penutupan.
+3. **Boleh tutup dengan "sebagian belum diketahui":** ya, hasilnya Ditutup Sebagian.
+4. **Selisih saat tutup:** [Bawa ke minggu depan] (default saat ada data tak pasti) atau [Catat sebagai selisih]. Pilihan kedua membuat kejadian koreksi kas, hanya U, tidak menyentuh H.
+5. **Snapshot beku:** angka dan kepastian pada saat tutup disimpan dengan versi engine.
+6. Barang yang belum dicek tetap membawa status Belum Diketahui ke periode berikut.
+
+## 20. KOREKSI & AUDIT
+- **Periode terbuka:** edit = versi baru, hapus = void, riwayat tetap.
+- **Periode tertutup:** tidak boleh diedit. **Koreksi** = pembalikan + entri baru, dicatat di periode berjalan dengan tautan ke yang dikoreksi. Laporan lama tidak berubah dan hanya mendapat penanda "ada N koreksi".
+- **Contoh:** rusak 2 ditemukan setelah periode ditutup. Koreksi memindahkan 2 unit dari "terjual" ke "rusak". U berkurang sebesar harga jual dan H menyesuaikan.
+- **Jejak audit:** apa, kapan (waktu server), sumber (manual, AI, OCR), sebelum dan sesudah, alasan (opsional). "Oleh siapa" **belum bisa dijawab tanpa login** (U-catatan di Risiko).
+- **Undo:** void selama periode terbuka. Sesudah tutup, jadi koreksi.
+- **Kunci:** tidak ada jalur kode yang menimpa sejarah.
+
+## 21. DATA CERTAINTY
+- **Pasti:** ditulis atau dikonfirmasi pengguna, atau turunan murni dari data Pasti.
+- **Perlu Diperiksa:** anomali, confidence rendah, kisaran, estimasi yang diberi label.
+- **Belum Diketahui:** produk belum dicek, sumber uang belum dipilih, modal belum ada.
+- **Propagasi:** angka turunan mengikuti komponen terburuk. Total menampilkan bagian Pasti terpisah dari bagian tak pasti.
+- **Naik kelas:** hanya lewat konfirmasi pengguna. Sistem tidak pernah menaikkan sendiri.
+
+## 22. AI INPUT
+- **Alur:** teks, parser (aturan dan kamus lebih dulu, LLM cadangan), usulan kejadian dengan confidence per field, validasi bisnis, preview, konfirmasi, inti.
+- **Aturan:** AI menghasilkan **usulan**, bukan kejadian. Field Perlu Diperiksa harus dipilih sendiri oleh pengguna sebelum Simpan aktif.
+- **Risiko:** rendah lewat preview. Tinggi (hapus, ubah periode tertutup) lewat konfirmasi plus Undo.
+- **Ambigu:** satu pertanyaan ("Mie Suksess atau Mie Goreng?").
+- **Edge:** "Jumat" saat hari ini Kamis menunjuk Jumat lalu, bisa di periode tertutup, jadi tanya. "2 juta 850" = 2.850.000 harus punya test sendiri.
+- **Batas:** AI tidak menghitung, tidak menulis ke database, dan tidak menjadi sumber kebenaran. Satu perintah multi-kejadian disimpan atomik (semua atau tidak sama sekali).
+
+## 23. OCR INPUT
+- **Alur:** foto, ekstraksi, pemetaan ke master, pemeriksaan aritmetika, preview, Periksa, Simpan.
+- **Verifikasi aritmetika:** jumlah × harga harus sama dengan total baris, dan jumlah baris harus sama dengan total nota. Ketidakcocokan membuat field Perlu Diperiksa, tidak hanya dari confidence model.
+- **Tidak terbaca:** field kosong berstatus Belum Diketahui. Tidak diisi, dan baris tidak bisa disimpan sebelum diselesaikan atau dibuang.
+- **Alias nota** ("MIE GRG") hanya tersimpan setelah pengguna mengonfirmasi.
+- **Kunci:** ambang confidence numerik adalah konfigurasi, belum dikalibrasi.
+
+## 24. SINGLE CALCULATION ENGINE
+- **Def:** satu fungsi murni: kejadian + riwayat harga + waktu → laporan (angka, kepastian, pohon penjelasan).
+- **Dipakai oleh:** preview, simpan, laporan, dashboard, rekonsiliasi, AI (preview), export.
+- **Aturan:** antarmuka tidak boleh punya rumus. Server menghitung ulang saat simpan dan menjadi otoritas. Snapshot menyimpan versi engine.
+- **Edge:** jika preview dan hasil server berbeda, tampilkan hasil server dan catat sebagai bug.
+- **Kunci:** wujud teknisnya (modul bersama atau pemanggilan server) diputuskan di TRD. Prinsipnya terkunci di sini.
+
+## 25. LIVE PREVIEW
+- **Def:** hasil draft dari kejadian yang belum disimpan, dihitung engine yang sama.
+- **Kiri (BARANG & HASIL):** tersedia, sisa, terjual, penjualan, modal, untung. **Kanan (UANG & SETORAN):** uang seharusnya, pendapatan lain, pengeluaran, disetor, selisih, status.
+- **Aturan:** ditandai "belum disimpan". Tanpa tombol Hitung. Data kepastian ikut tampil.
+- **Contoh:** "Mie sisa 25" langsung memunculkan 47 terjual, Rp329.000, Rp188.000, Rp141.000.
+- **Mobile:** tumpuk vertikal dengan header ringkas dua sisi agar hubungan tetap terlihat.
+
+## 26. EXPLAINABILITY
+- **Def:** setiap angka punya pohon komponen dari engine, bukan teks rakitan.
+- **Level:** 1 ringkas, 2 "Kenapa?", 3 "Lihat perhitungan", 4 kejadian dan riwayat.
+- **Uang seharusnya:** saldo bawaan + penjualan + pendapatan lain − belanja (uang toko) − pengeluaran (uang toko) = uang seharusnya. Lalu − setoran = selisih.
+- **Untung:** penjualan + pendapatan lain − modal terjual − rusak − dipakai − selisih barang − pengeluaran.
+- **Aturan:** komponen tak pasti ditandai di dalam penjelasan, tidak disembunyikan.
+
+---
+
+# CONTRADICTION & RISK CHECK
+
+| Risiko | Hasil | Status |
+|---|---|---|
+| Rumus bertentangan | Contoh master Rp2.850.000 tidak mengurangi belanja, sedangkan dokumen baru memasukkannya | Dikunci: bagian 17, jawaban U1 |
+| Double counting | Belanja bukan biaya. Setiap unit keluar tepat satu bucket | Dikunci: bagian 2, 3, 10 |
+| Stok negatif salah | Terjual negatif tidak dibuat. Menjadi PERLU DIPERIKSA | Dikunci: bagian 8 |
+| Laba tertukar kas | Dua rumus terpisah, tiga contoh angka | Dikunci: Fondasi |
+| Setoran tertukar laba | Setoran hanya U | Dikunci: bagian 5 |
+| Pembelian dianggap biaya | Aturan klasifikasi dan deteksi pembelian ganda | Dikunci: bagian 11 |
+| Rusak dihitung dua kali | Satu gerak stok, nilai turunan | Dikunci: bagian 10 |
+| Restock membuat periode | Periode adalah jendela kalender | Dikunci: bagian 6, 9 |
+| Perubahan harga merusak histori | Riwayat efektif, tak ditimpa | Dikunci: bagian 13–15 |
+| Cek sisa menciptakan penjualan fiktif (salah ketik) | Penjualan di atas tersedia mustahil. Outlier memicu catatan lunak. Undo tersedia | Terkunci sebagian: ambang pola konfigurasi |
+| Produk belum dicek dianggap nol | Belum Diketahui dan disebut di laporan | Dikunci: bagian 3, 19, 21 |
+| AI mengubah data diam-diam | Hanya usulan | Dikunci: bagian 22 |
+| OCR mengarang | Field kosong tak bisa disimpan, aritmetika dicek | Dikunci: bagian 23 |
+| Tutup padahal data kurang | Boleh sebagai Ditutup Sebagian, transparan | Dikunci: bagian 19 |
+| Koreksi menghapus sejarah | Pembalikan + entri baru | Dikunci: bagian 20 |
+| Preview ≠ hasil simpan | Satu engine | Dikunci: bagian 24 |
+| Timing: penjualan produk belum dicek lintas periode | Laba bergeser, uang tidak (kumulatif + bawaan selisih) | Dikunci, diungkapkan di laporan |
+| Urutan dalam satu hari (belanja vs cek sisa) | Jika tanggal belanja mundur sama dengan hari cek, tanya sebelum atau sesudah | Dikunci: bagian 8 |
+| Harga campuran dalam interval | Kisaran dan kepastian turun | Terkunci bersyarat: U3 |
+| Stok awal tanpa modal | Estimasi dari pembelian pertama, berlabel | Terkunci bersyarat: U8 |
+| Pembulatan | Total dan pcs sebagai sumber, rupiah bulat, sisa tetap di nilai | Dikunci: bagian 2, 15 |
+| Isi kemasan berubah | Rata-rata menyatukan stok campuran, insight muncul | Dikunci: bagian 15 |
+| Concurrency | Event append-only, kunci idempotensi, versi optimis. Penutupan dengan kunci periode dan snapshot atomik. Urutan memakai waktu server | Dikunci prinsipnya. Detail teknis di TRD |
+| Transaksi database | Perintah AI multi-kejadian atomik. Tutup dan snapshot dalam satu transaksi | Prinsip dikunci. Detail di TRD |
+| Pembelian belum lunas | Tidak ada mekanisme pelunasan | **BELUM TERKUNCI:** U5 |
+| Tanggal mundur | Periode terbuka boleh. Periode tertutup jadi koreksi | Dikunci: bagian 20 |
+| Penjualan non-tunai atau piutang | Mengubah arti "masuk toko" | **BELUM TERKUNCI:** U2 |
+| Penjualan dengan lebih dari satu satuan, atau pecahan | Satuan jual ganda belum didefinisikan | **BELUM TERKUNCI:** U6 |
+| Barang titipan, bonus supplier, diskon | Bisa muncul sebagai selisih tanpa penjelasan | **BELUM TERKUNCI:** U7 |
+| Tanpa login: tidak ada pelaku di audit | "Oleh siapa" kosong. Data uang terbuka bagi yang tahu alamat | Batas diketahui. Belum untuk produksi |
+| Event "uang diambil" | Tidak ditambah. Setoran boleh berkali-kali, koreksi kas menutup sisanya | Dikunci: tidak menambah fitur, ditinjau jika masalah nyata |
+
+---
+
+# FINAL BUSINESS LOGIC DECISION (bagian yang siap)
+
+**Bukan final lengkap.** Bagian di bawah siap jadi dasar PRD dan TRD. Sisanya menunggu U1–U11.
+
+**Siap dikunci**
+1. Tiga dunia terpisah, laba ≠ uang toko ≠ setoran, dengan rumus bagian 1.
+2. Kejadian append-only. Edit = versi, hapus = void, koreksi = pembalikan + entri baru di periode berjalan.
+3. Stok memakai rata-rata bergerak (R1). Hukum kekekalan unit dan nilai.
+4. Terjual = tersedia − sisa, hanya bila 0 ≤ terjual ≤ tersedia. Selain itu PERLU DIPERIKSA. Tidak ada penjualan negatif.
+5. Produk belum dicek berstatus Belum Diketahui. Tidak dianggap nol.
+6. Uang kumulatif. Selisih tak terselesaikan dibawa ke periode berikut.
+7. Periode = jendela kalender. Tutup boleh sebagian, dengan snapshot beku.
+8. Sumber uang belanja dan pengeluaran: tanya sekali, simpan sebagai pengaturan toko, bisa diubah per kejadian, tersimpan per kejadian.
+9. Status setoran: COCOK, PERLU DIPERIKSA, BELUM COCOK, ditambah "Menunggu setoran".
+10. AI dan OCR hanya menghasilkan usulan. Satu engine untuk semua.
+11. Tidak menambah event "uang diambil" atau fitur "uang pegangan".
+
+## BELUM TERKUNCI: keputusan untuk kamu
+
+**Wajib (U1–U4)**
+- **U1. Sumber uang belanja dan pengeluaran, nilai awal.** Pilih sekali: uang toko atau uang pribadi? Contoh master Rp2.850.000 mengarah ke "pribadi". Kalau belum yakin, sistem tetap bertanya sekali saat belanja pertama.
+- **U2. Semua penjualan dianggap uang masuk toko?** Kalau ada QRIS, transfer, atau utang pelanggan yang tidak ikut disetor, rumus uang berubah. Rekomendasi: anggap semua masuk toko, dan setoran adalah jumlah dari semua kanal.
+- **U3. Harga jual berubah tanpa cek sisa:** (A) kisaran (rekomendasi), (B) blokir sampai cek, atau (C) satu angka perkiraan. B memaksa pengguna. C mengarang.
+- **U4. Status setoran:** berdasarkan kepastian data (rekomendasi, bagian 5) atau berdasarkan besar rupiah selisih?
+
+**Cukup "OK" atau bantah (U5–U11)**
+- **U5.** Pembelian belum lunas di luar MVP.
+- **U6.** MVP hanya satu satuan jual (pcs), bilangan bulat.
+- **U7.** Barang titipan, diskon, dan bonus supplier di luar MVP. Jika sering terjadi, bilang.
+- **U8.** Stok awal tanpa modal memakai estimasi dari pembelian pertama berikutnya (berlabel).
+- **U9.** Rata-rata bergerak menggantikan FIFO (R1).
+- **U10.** "Sudah dicek" berarti ada pengamatan pada tanggal acuan yang sama (tanggal setoran terakhir atau hari terakhir periode).
+- **U11.** Minggu Senin–Minggu, zona WIB, setoran biasanya hari Minggu.
+
+**Selanjutnya:** balas jawaban U1–U4 (dan "OK" untuk U5–U11). Setelah itu saya buat **FINAL BUSINESS LOGIC DECISION** versi lengkap, lalu PRD final. Kalau kamu mau dokumen ini disimpan sebagai file `.md` untuk repo, bilang saja.

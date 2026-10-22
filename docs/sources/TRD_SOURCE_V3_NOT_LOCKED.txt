@@ -1,0 +1,381 @@
+# TRD TOKO SAKALA (v3, pribadi, lokal, Rp0)
+
+Status: **revisi, belum terkunci** sampai PRD v1.1, APPFLOW, dan BUILD_ORDER selaras dan butir PRD §22 disetujui.
+Menggantikan TRD v2.1 (Cloudflare + Edge Functions + Auth + demo). Mengikuti cakupan terkunci Okt 2026 (PRD §0).
+Penanda sumber: **[R]** dokumentasi resmi dibaca, **[S]** sumber sekunder, **[?] BELUM TERVERIFIKASI**. Tanggal verifikasi 10 Okt 2026.
+
+---
+
+## 0. Ringkasan keputusan
+
+| Area | Keputusan |
+|---|---|
+| Penggunaan | Pribadi. Bukan layanan publik |
+| Aplikasi | Next.js **mode server**, berjalan **lokal** (`127.0.0.1`), tidak dipublikasikan |
+| Database | **Satu** proyek Supabase Free (PostgreSQL), dipakai hanya untuk **data nyata** |
+| Akses database | Server lokal → peran `app_server` (SELECT + RPC saja) lewat Shared Pooler mode session |
+| Login, demo, non-tunai | **Tidak ada** |
+| Penulisan | Server Action → validasi ulang engine → RPC Postgres atomik |
+| Pengembangan dan data uji | **Database lokal** (Supabase CLI atau Postgres Docker). Tidak pernah di cloud |
+| Hosting publik | **Ditunda.** Butuh keputusan akses tersendiri |
+| Edge Function, Cloudflare, Auth, supabase-js | **Tidak dipakai** |
+| OCR / AI | Tahap lanjutan: Tesseract.js dan parser aturan lokal. LLM eksternal tidak ada |
+| Biaya | **Rp0.** Tanpa upgrade, kartu, atau add-on (§16) |
+
+---
+
+## 1. Prinsip yang mengikat desain
+1. Angka uang = turunan murni dari kejadian append-only oleh **satu engine**.
+2. Preview = Save: modul engine yang sama di browser dan server; server menghitung ulang **sebelum commit** dan menolak bila digest berbeda.
+3. Browser tidak pernah menyambung ke database. Semua akses lewat server lokal.
+4. Tidak ada rahasia di kode, browser, repo, atau prompt.
+5. Data nyata hanya setelah **Gerbang Data Nyata** (§20) lulus.
+6. Hal yang belum terbukti ditulis **BELUM TERVERIFIKASI**.
+
+---
+
+## 2. Arsitektur
+
+```
+Browser  ───────►  Server Next.js lokal (127.0.0.1:3000)
+(UI + engine untuk preview)    ├ Komponen server: memuat data, hidrasi ke klien
+                               └ Server Actions: commit, tutup periode, preview koreksi
+                                        │  DATABASE_URL (peran app_server, rahasia di .env.local)
+                                        ▼
+                    Supabase Free PostgreSQL (cloud)  ◄── hanya data nyata
+                       RLS, trigger append-only, RPC SECURITY DEFINER
+
+Pengembangan/uji: sama persis, tetapi database LOKAL (Supabase CLI atau Postgres Docker) + seed.dev.sql
+```
+
+### 2.1 Alur baca
+1. Komponen server memuat `event` + tabel `ev_*` + `period_close` + `snapshot_*` lewat peran `app_server` (SELECT).
+2. Data dihidrasi ke komponen klien sebagai `EngineInput` (hanya di memori; tanpa localStorage untuk data bisnis).
+3. Browser dan server menjalankan `calculate()` yang sama.
+
+### 2.2 Alur tulis
+1. Form menghasilkan `command_id` (UUID) dan **draft kejadian**; browser menjalankan `calculate(existing + draft)` dan mencatat `preview_digest`.
+2. Server Action `commit({command_id, kind, events, expected_max_seq, as_of, preview_digest, confirm?})`:
+   Zod → muat data → `max(seq) == expected_max_seq`? → `|as_of − jam server| ≤ 10 menit`? → `calculate(existing + draft)` → bandingkan digest → panggil `rpc_commit_command`.
+3. Digest berbeda → `PARITY_MISMATCH` + angka kanonis; **tidak ada yang disimpan**.
+4. Sukses → `{event_ids, max_seq, digest}`.
+
+### 2.3 Alur tutup periode
+Server Action `closePeriod`: hitung snapshot (engine, versi saat ini), tentukan `lengkap`/`sebagian` (lengkap bila semua produk relevan CUKUP), tolak "Catat sebagai selisih" bila masih ada BELUM CUKUP atau komponen tak pasti, lalu `rpc_close_period` (kunci + cek data basi + koreksi kas atomik + snapshot dalam satu transaksi).
+
+### 2.4 Alasan
+| Pilihan | Alasan | Ditolak |
+|---|---|---|
+| Server lokal | Tanpa login, satu-satunya cara aman: tidak ada URL yang terbuka. Tidak butuh hosting, jadi Rp0 dan tanpa batas CPU | Hosting publik tanpa login (data terbuka) |
+| Mode server Next.js | Server Actions dan komponen server tersedia; secret tetap di server | Static export (hanya perlu bila hosting statis) |
+| Satu proyek Supabase untuk data nyata | Sesuai keputusan; Free cukup untuk satu toko | Dua proyek, demo |
+| Driver Postgres langsung (`postgres`) | Transaksi dan RPC dari server; PostgREST tidak dipakai | supabase-js (tak perlu klien API) |
+| RPC SECURITY DEFINER | Tulis atomik; peran aplikasi tak bisa INSERT/UPDATE/DELETE langsung | Hak tulis langsung ke tabel |
+| Zod | Satu skema untuk form dan server | Validasi manual |
+
+---
+
+## 3. Matriks verifikasi layanan
+
+| Layanan | Rp0 tanpa kartu | Komersial | Batas gratis | Backup | Keamanan | Risiko keberlanjutan | Status |
+|---|---|---|---|---|---|---|---|
+| Supabase Free DB | Ya **[S]** | Ketentuan belum dibaca langsung; diskusi komunitas mengizinkan **[?]** | 500 MB, 2 proyek aktif, dijeda setelah 7 hari tanpa aktivitas **[R]** | **Tidak ada backup otomatis [R]** | RLS, TLS | Dijeda; jendela pemulihan proyek terjeda: sumber berbeda (90 hari vs 1 tahun) **[?]**, anggap 90 hari | **[?] baca ToS** |
+| Supabase koneksi | – | – | Direct = IPv6 saja pada Free; Shared Pooler (session 5432, transaction 6543) IPv4 **[R]** | – | – | – | **Dipakai: pooler session** |
+| Supabase CLI + Docker (lokal) | Ya | Ya | Lokal | Tak berlaku | – | Butuh Docker | OK; alternatif: Postgres Docker polos |
+| GitHub Free (privat) | Ya | Ya | Actions 2.000 menit/bulan **[R]** | – | Secret terenkripsi | Cron tidak dijamin **[R]** | OK (CI saja; backup opsional) |
+| Tesseract.js (tahap lanjutan) | Ya | Apache-2.0 **[S]** | Lokal | – | Foto tidak keluar perangkat | Akurasi nota termal terbatas | Tahap lanjutan |
+| Hosting publik (Vercel, Cloudflare, Netlify, dsb.) | – | Vercel Hobby non-komersial **[R]** | – | – | **Tanpa login = data terbuka** | – | **Ditunda** (di luar cakupan) |
+| Supabase Auth, Edge Functions, Cloudflare Zero Trust | – | – | – | – | – | – | **Tidak dipakai** |
+| LLM/API AI eksternal | – | – | – | – | Data bisa dipakai penyedia (Gemini gratis) **[R]** | – | **Tidak ada** |
+
+**BELUM TERVERIFIKASI (dibaca langsung sebelum Gerbang Data Nyata):**
+1. Ketentuan layanan Supabase untuk penggunaan Free (komersial atau tidak).
+2. Jendela pemulihan proyek Supabase yang terjeda.
+3. `pg_dump` lewat Shared Pooler mode session (dokumentasi menyarankan koneksi direct untuk pg_dump; direct butuh IPv6).
+4. Perilaku `next dev/start -H 127.0.0.1` pada mesin ini (diuji di Tahap 3, §13).
+5. Kunci `[db.seed]` pada `supabase/config.toml` untuk versi CLI yang dipakai.
+6. Versi mayor PostgreSQL di proyek Supabase. Uji CI berjalan pada Postgres 16 **dan** 17; uji lokal hanya 16. Jalankan uji peran di cloud (RUNBOOK §6.3) sebagai pembuktian akhir.
+7. Pengujian di sini memakai **shim** untuk peran Supabase (`anon`, `authenticated`, `service_role`); perilaku peran asli hanya terbukti di cloud (RUNBOOK §6.3).
+
+---
+
+## 4. Versi dan dependensi
+
+Versi pasti dikunci `pnpm-lock.yaml` saat `pnpm add`; angka di bawah terkonfirmasi dari sumber, bukan jaminan patch terakhir. Pin eksak; upgrade ≤48 jam setelah rilis keamanan; Dependabot; `pnpm audit` di CI.
+
+| Komponen | Pilihan | Sumber |
+|---|---|---|
+| Node.js | 24.x LTS | **[S]** |
+| pnpm | 11.x | **[S]** |
+| Next.js | 16.4.x (patch terbaru) | 16.4.0 dirilis 6 Okt 2026 **[R]**; tiga rilis keamanan Agu–Sep 2026 **[R]** |
+| React | 19.3.x | **[R]** |
+| TypeScript | 6.0.x (TS 7.0.2 stabil tetapi tanpa API stabil untuk typescript-eslint sampai 7.1) | **[R]** |
+| Tailwind CSS | 4.3.x | **[S]** |
+| shadcn/ui | CLI v4, `--base radix` | **[R]** |
+| Zod | 4.5.x | **[S]** |
+| postgres (driver) | 3.4.x (3.4.9 terlihat) | **[S]** |
+| Vitest | ≥ 4.1.10 | **[S]** |
+| Playwright + axe | 1.62.x | **[S]** |
+| ESLint / Prettier | 10.x / 3.9.x | **[S]** |
+| Supabase CLI | 2.109+ | **[S]** |
+| Tesseract.js | 7.x (tahap lanjutan) | **[S]** |
+
+Sengaja tidak dipakai: supabase-js, `@supabase/ssr`, Wrangler, ORM, pustaka tanggal (WIB tetap +07:00), state manager, pustaka grafik, `fast-check`, Redis, antrean, Sentry.
+
+---
+
+## 5. Struktur repositori
+
+```
+toko-sakala/
+├─ src/app/                 rute + Server Actions (src/app/actions/)
+├─ src/components/          UI (ui/ = shadcn)
+├─ src/engine/{contract.ts, v1/}     engine murni (sumber tunggal)
+├─ src/domain/              skema Zod, tipe perintah
+├─ src/server/              db.ts (server-only), repositori, loader
+├─ src/lib/ src/types/
+├─ supabase/{migrations/, seed.dev.sql, seed-load.sql, config.toml}
+├─ scripts/                 backup, restore, verify, drill, scan-secrets
+├─ tests/{db,golden,unit,e2e}/
+├─ docs/{PRD.md, TRD.md, APPFLOW.md, BUILD_ORDER.md, RUNBOOK.md}
+├─ .github/workflows/{ci.yml, backup.yml (opsional)}
+├─ .env.example  next.config.ts  README.md
+```
+Engine murni: tanpa impor React/Next/Node, tanpa `Date.now`, `Math.random`, atau locale; ESLint `no-restricted-imports` menjaganya. `src/server/*` memakai `import 'server-only'`.
+
+---
+
+## 6. Database
+
+### 6.1 Skema (SQL ada di `supabase/migrations/`)
+Relasional bertipe; JSON hanya untuk `snapshot_explain.tree` (turunan) dan `command.result`.
+
+| Kelompok | Tabel |
+|---|---|
+| Identitas | `toko`, `product` (boleh diubah, diaudit), `audit_log`, `backup_log` |
+| Kejadian | `event` (`seq`, `kind`, `occurred_at`, `occurred_precision`, `recorded_at`, `command_id`, `supersedes_id`, `correction_of_close_id`, `source`) |
+| Detail | `ev_stock_check`, `ev_purchase` + `ev_purchase_item`, `ev_damage`, `ev_used`, `ev_expense`, `ev_other_income`, `ev_deposit`, `ev_price_change`, `ev_no_sales_statement`, `ev_cash_adjustment`, `ev_setting` |
+| Periode | `period_close` (tanpa tumpang tindih) + `snapshot_line`, `snapshot_product_state`, `snapshot_explain` |
+| Idempotency | `command` |
+
+Tidak ada: tabel demo, kolom pemilik, tabel/kolom non-tunai (diuji).
+
+### 6.2 Kendala dan trigger
+FK komposit `(…, toko_id)` (tidak ada lintas toko); CHECK nilai; `pcs` turunan; indeks `(toko_id, seq)` dan `(toko_id, occurred_at, seq)`. Trigger: append-only di semua tabel kejadian/snapshot/command/log/toko (UPDATE, DELETE, TRUNCATE ditolak); rantai versi valid; periode tertutup (kejadian di dalamnya wajib bertanda koreksi); produk diaudit dan id/toko tidak bisa berubah.
+
+### 6.3 Konsekuensi append-only: data uji hanya lokal
+Data yang sudah masuk tidak bisa dihapus lewat aplikasi. Maka:
+- Pengembangan, seed (`seed.dev.sql`), seed beban, dan semua test berjalan di database **lokal**.
+- Cloud (satu-satunya proyek) tidak pernah diberi seed. `supabase db push` hanya menerapkan migrasi.
+- Bila data uji sempat masuk ke cloud, **reset sebelum data nyata pertama** (RUNBOOK §6.2). Sesudah data nyata pertama, reset dilarang.
+
+### 6.4 Koneksi
+Cloud: `DATABASE_URL` peran `app_server` lewat **Shared Pooler mode session** (`app_server.<project-ref>`, port 5432; IPv4 pada Free **[R]**), `postgres` `max: 3`. Kata sandi dibuat pemilik (`alter role app_server with password …` di SQL Editor), tidak di repo/chat. Lokal: koneksi langsung ke database lokal.
+
+---
+
+## 7. Akses dan RLS
+- `anon` dan `authenticated`: **tidak punya hak apa pun** (tabel, fungsi, bahkan USAGE skema), tanpa policy. Diuji.
+- RLS aktif di semua tabel (diuji).
+- `app_server`: SELECT (kecuali `command`), INSERT `product`/`toko`, UPDATE `product(name, archived_at)`, EXECUTE `rpc_commit_command` dan `rpc_close_period`. **Tidak ada** INSERT/UPDATE/DELETE langsung pada event dan tabel kejadian (diuji).
+- Tabel `command`: tanpa policy dan tanpa grant; hanya RPC.
+- Skema `public` dipakai; karena `anon`/`authenticated` tidak punya akses, PostgREST (Data API) tidak mengekspos data. Opsional: matikan Data API di Dashboard (tidak dipakai).
+
+---
+
+## 8. RPC (kontrak)
+`rpc_commit_command(p_toko, p_command_id, p_kind, p_payload, p_expected_max_seq, p_actor)` → `{event_ids, max_seq, replayed}`: kunci advisory per toko, idempotency (id sama + isi sama = hasil lama; isi beda = `TS_COMMAND_REUSED`), `TS_STALE` bila `max(seq)` berbeda, insert header + detail bertipe.
+`rpc_close_period(p_toko, p_command_id, p_period_start, p_period_end, p_completeness, p_engine_version, p_input_max_seq, p_snapshot, p_actor)` → `{close_id}`: kunci, `TS_STALE`, `TS_PERIOD_GAP`, koreksi kas atomik (`cash_adjustment` di snapshot), snapshot beku.
+Kode error: `TS_BAD_PAYLOAD`, `TS_NO_TOKO`, `TS_COMMAND_REUSED`, `TS_STALE`, `TS_BAD_CHAIN`, `TS_CLOSED_PERIOD`, `TS_BAD_CORRECTION`, `TS_PERIOD_GAP`, `TS_APPEND_ONLY`, `TS_UNKNOWN_KIND`.
+
+---
+
+## 9. Server Actions (kontrak)
+Hanya dijalankan oleh server lokal; semuanya memvalidasi dengan Zod dan menganggap input tidak tepercaya.
+- `commit` (§2.2). Server mengisi `correction_of_close_id` otomatis bila kejadian berada di periode tertutup; perubahan periode tertutup, void, atau edit wajib `confirm: true`. Kejadian hanya-tanggal dinormalisasi ke 12.00 WIB.
+- `closePeriod` (§2.3).
+- `previewCorrection`: baca saja; delta engine-sekarang − snapshot.
+- `exportData`: JSON/CSV semua kejadian.
+- Kode hasil: `VALIDATION`, `STALE`, `PARITY_MISMATCH`, `CONFLICT`, `NEED_CONFIRMATION`, `CLOSED_PERIOD`, `DB_UNAVAILABLE`, `INTERNAL`.
+
+---
+
+## 10. Kontrak engine
+Tipe dan invarian: `src/engine/contract.ts`. Fixture: `tests/golden/gt.json`.
+- Fungsi murni `calculate(EngineInput) → EngineOutput`; `asOf` selalu masukan.
+- Rupiah dan pcs bilangan bulat aman; pelanggaran = gagal keras.
+- Dua kolam per produk; keluar proporsional; pembulatan setengah ke atas pada nilai, sisa tetap di nilai.
+- **Waktu:** UTC; periode `[Senin 00:00 WIB, Senin berikutnya 00:00 WIB)`; hanya-tanggal = 12.00 WIB, seri oleh `seq`; periode pertama dimulai pada pengamatan awal paling awal.
+- **Uang:** semua penjualan tunai. Kas toko = penjualan + pendapatan lain − keluar bersumber kas toko − setoran ± koreksi kas. Uang siap setoran = kas toko sebelum setoran yang dievaluasi.
+- Digest: SHA-256 JSON kanonis angka kunci (tanpa id/seq).
+
+### 10.1 Aturan waktu (satu tempat)
+| Aturan | Isi | Bukti |
+|---|---|---|
+| Zona | Tampil WIB (UTC+7, tanpa DST); simpan UTC | – |
+| Periode | `[Senin 00:00 WIB, Senin berikutnya 00:00 WIB)`: awal inklusif, akhir eksklusif | Uji DB (8b) + fixture ST1 |
+| Periode pertama | Dimulai pada pengamatan awal paling awal | ST4 |
+| Tutup lebih cepat | Akhir periode = waktu tutup; berikutnya mulai saat itu; periode harus bersambung | Uji DB `TS_PERIOD_GAP`, ST3 |
+| Hanya-tanggal | Disimpan 12.00 WIB (05:00 UTC) | ST2 |
+| Urutan | `(occurred_at, seq)`; `seq` = urutan pencatatan server | ST2 |
+| Tanggal mundur | Periode terbuka boleh; periode tertutup → koreksi yang ditautkan otomatis | Uji DB 8, 8b, 9b |
+| Tanggal masa depan | Ditolak bila > 5 menit dari jam server (validasi server) | ST5 (belum dijalankan) |
+| `as_of` preview | Dari klien; server menerima selisih ≤ 10 menit | Tahap 3 |
+| Interval penjualan | (pengamatan sebelumnya, pengamatan ini]; milik periode yang memuat akhir interval | Fixture engine |
+| Ekor waktu | (pengamatan terakhir, E]; E = sekarang / waktu setoran / waktu tutup | SC4, SC5 |
+| Tampilan | "Rabu 8 Okt 2026, 10.00" WIB, tanpa detik | – |
+- **Versi:** SemVer; `engine/v1` dibekukan saat periode data nyata pertama ditutup; perubahan angka sesudahnya = `v2`; snapshot menyimpan versi; delta memakai engine milik snapshot; CI menghitung ulang fixture snapshot dan harus identik. Delta: `engine_sekarang(P_k) − (snapshot_k + delta yang sudah masuk snapshot berikutnya)`, diturunkan, tidak disimpan.
+
+---
+
+## 11. Klien
+- Komponen klien memuat `engine`, `domain` (Zod), tipe. **Tidak** memuat `server/*`, `postgres`, atau apa pun yang berisi rahasia.
+- Tidak ada `NEXT_PUBLIC_*` berisi rahasia (bahkan tidak ada yang diperlukan).
+- Tidak ada cache persisten untuk data uang; halaman data dinamis.
+- Data bisnis hanya di memori.
+
+---
+
+## 12. Parser AI dan OCR (tahap lanjutan)
+Parser aturan lokal (angka Indonesia, satuan, hari relatif, kecocokan nama) dan Tesseract.js di Web Worker (data bahasa `ind`+`eng` di-host lokal, foto tidak keluar perangkat; verifikasi aritmetika; field tak terbaca kosong). Keduanya hanya **mengusulkan**; tulis lewat `commit`. Tidak ada LLM eksternal, kunci, atau variabel. Dibangun hanya setelah BUILD_ORDER tahap 4 stabil.
+
+---
+
+## 13. Keamanan
+
+Fakta: **tanpa login, aplikasi tidak otomatis privat.** Satu-satunya kontrol akses adalah bahwa server hanya berjalan di mesin sendiri.
+
+| Kontrol | Rincian |
+|---|---|
+| Ikatan jaringan | Jalankan `pnpm dev -H 127.0.0.1` / `pnpm start -H 127.0.0.1`. Tanpa `-H`, Next dapat mendengarkan di semua antarmuka. **[?]** diuji di Tahap 3: akses dari perangkat lain dalam jaringan harus gagal |
+| Tidak ada publikasi | Tanpa tunnel, port forwarding, atau hosting |
+| Rahasia | `DATABASE_URL` hanya di `.env.local` (di `.gitignore`); `scan-secrets.mjs` di CI dan pra-commit |
+| Database | RLS + REVOKE total untuk anon/authenticated; app_server hanya SELECT + RPC |
+| Server Actions | Zod; batas ukuran; pemeriksaan Origin bawaan Next **[S]**; tidak mengandalkan UI |
+| Header | `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `noindex` di `next.config.ts` |
+| Rantai pasok | Pin, audit, Dependabot; tanpa `next/og`, tanpa gambar jarak jauh |
+
+### 13.1 Model ancaman localhost
+
+| Ancaman | Mitigasi | Status |
+|---|---|---|
+| Perangkat lain di jaringan | Ikat `127.0.0.1` | diuji Tahap 3 **[?]** |
+| Situs lain di browser yang sama memanggil localhost (CSRF) | Server Actions memeriksa Origin; tanpa header CORS; tanpa cookie sesi | **[S]** |
+| **DNS rebinding** (domain penyerang diarahkan ke 127.0.0.1; Origin sama dengan Host sehingga lolos pemeriksaan Origin) | **Penjaga Host**: middleware menolak (403) setiap permintaan yang `Host`-nya bukan `localhost:<port>` atau `127.0.0.1:<port>`. Uji: `curl -H "Host: evil.example"` → 403 | **Wajib; belum diimplementasi [?]** |
+| Port diteruskan otomatis (VS Code/Codespaces/dev container/VM jarak jauh) | Terminal harus berjalan di **komputer sendiri**, bukan sandbox atau mesin jarak jauh; periksa tab Ports dan `ss -ltnp` | Gerbang §20 |
+| Pengguna lain pada komputer yang sama; malware; ekstensi browser | Tidak dicegah (tanpa login). Pakai akun OS sendiri + kunci layar | **Batas diterima** |
+| Kebocoran `.env.local` | `.gitignore`, `scan-secrets` (repo + riwayat) | diuji |
+
+Jika nanti ingin diakses dari ponsel atau dipublikasikan, itu keputusan baru dan **wajib** menambah kontrol akses terlebih dulu.
+
+---
+
+## 14. Validasi dan error
+Zod di form dan Server Action; CHECK DB garis terakhir; engine tidak melempar untuk kondisi bisnis (anomali adalah data). Pesan Indonesia sederhana. Koneksi gagal: "Coba lagi" (retry aman karena idempoten), tanpa antrean lokal. Jejak penting disimpan di DB (`audit_log`, `command`).
+
+### 14.1 Gangguan koneksi atau cloud (perilaku terdefinisi dan diuji)
+Aplikasi berjalan lokal, tetapi **data nyata ada di cloud**. Karena itu:
+
+| Kondisi | Perilaku | Tidak boleh |
+|---|---|---|
+| Tidak tersambung saat memuat | Layar "Tidak tersambung" + `[Coba lagi]`. Tidak ada data lama (tanpa cache persisten) | Menampilkan angka usang tanpa label |
+| Terputus saat tab sudah terbuka | Data tetap terlihat berlabel "Data per [waktu]; tidak tersambung"; **semua penyimpanan dinonaktifkan**; draft tetap di layar | Menyimpan lokal diam-diam atau antrean tersembunyi |
+| Putus tepat saat menyimpan | "Belum pasti tersimpan. Coba lagi." Percobaan ulang memakai `command_id` yang sama → idempoten: hasil lama atau ditulis sekali | Menulis ganda |
+| Proyek terjeda | Layar khusus + petunjuk runbook | – |
+| Lambat/menggantung | `connect_timeout` 10 detik dan `statement_timeout` 15 detik (belum diset) → `DB_UNAVAILABLE` | Menunggu tanpa batas |
+
+Tes: Server Action dengan DB tak terjangkau mengembalikan `DB_UNAVAILABLE` dan **tidak menyimpan apa pun**; E2E mode offline; ulang `command_id` tidak menduplikasi (idempotensi sudah diuji di DB). Konsekuensi: data nyata tidak aman hanya karena aplikasi berjalan; Gerbang §20 mensyaratkan uji ini.
+
+## 15. Performa
+Muat seluruh kejadian di server per sesi (ribuan baris; 10.011 baris terbaca ±3 ms di DB lokal), hitung di browser. Tanpa cache uang. Optimasi (mulai dari snapshot terakhir) hanya bila terukur lambat.
+
+## 16. Larangan biaya
+Jangan menekan Upgrade/Pro/Team; "Add payment method"; add-on Supabase (PITR, IPv4, compute, custom domain, log drain, branching); domain berbayar; hosting berbayar; API LLM atau OCR berbayar. Bila layanan meminta kartu, **berhenti dan laporkan**.
+
+---
+
+## 17. Backup dan pemulihan
+Supabase Free **tanpa backup otomatis** **[R]**.
+
+| Lapis | Mekanisme | Jaminan |
+|---|---|---|
+| 1 | Ekspor JSON/CSV dari aplikasi; pengingat setelah tutup periode; disimpan di perangkat/Drive milik sendiri | Hanya bila dilakukan |
+| 2 | `scripts/backup.sh` (pg_dump + age; kunci publik di repo, **kunci privat hanya pemilik**), dijalankan manual atau dijadwalkan di mesin sendiri | **Bukan jaminan** |
+| 3 | `backup.yml` GitHub (opsional) | **Bukan jaminan**: jadwal bisa terlewat **[R]** |
+| 4 | Aplikasi menampilkan usia backup dari `backup_log` | Menampakkan kegagalan |
+| 5 | Latihan pemulihan `scripts/restore-drill.sh` (CI setiap PR) | **Teruji** |
+| 6 | Uji pemulihan ke DB kosong sebelum data nyata dan tiap bulan | Manual |
+
+**Sudah teruji (Postgres 16 lokal):** backup → enkripsi → dekripsi → pulih ke DB kosong → checksum identik (kejadian, butir belanja, periode, snapshot, command); trigger append-only, RLS, dan hak akses ikut pulih. **Pemulihan data-saja dilarang** (penjaga periode tertutup menolak); gunakan dump penuh. Target pemulihan: Neon Free atau proyek Supabase baru; peran `app_server`, `anon`, `authenticated`, `service_role` serta ekstensi `pgcrypto` dan `btree_gist` harus ada lebih dulu.
+
+Target jujur: kehilangan data maksimal sampai backup/ekspor terakhir yang berhasil. Tanpa pemulihan ke titik waktu. Penghapusan tidak sengaja dicegah trigger; perintah destruktif manual lewat Dashboard tidak terlindungi.
+
+---
+
+## 18. Arsitektur test
+
+| Lapis | Alat | Status |
+|---|---|---|
+| Basis data | psql di Postgres biasa + shim | **Ada, lulus (70 asersi)**: lapisan database saja. Logika uang BELUM tercakup (menunggu engine) |
+| Konkurensi | `tests/db/20_concurrency.sh` | **Ada, lulus** |
+| Latihan pemulihan | `scripts/restore-drill.sh` | **Ada, lulus** |
+| Angka golden hitung-tangan | `tests/golden/verify_by_hand.py` | **Ada, 28 asersi lulus** |
+| Fixture golden engine | `tests/golden/gt.json` (GT1–GT8, SC1, SC2, SC4–SC6) | Ada; dijalankan engine di Tahap 2 |
+| Unit/invarian engine | Vitest + generator berbenih (I1–I7) | Tahap 2 |
+| Server Action | Vitest + Postgres uji | Tahap 3 |
+| E2E + a11y | Playwright + axe, 3 viewport | Tahap 3–4 |
+| Keamanan | `scan-secrets`, uji peran | CI |
+| Penjaga Host (DNS rebinding) | Vitest/Playwright: `Host: evil.example` → 403 | Tahap 3 |
+| Gangguan koneksi | Vitest (DB tak terjangkau) + Playwright offline | Tahap 3 |
+| Gerbang UX | Playwright + uji teks + lint skema form (`docs/UX_GATE.md`) | Tahap 3–4 |
+
+**Cakupan 70 asersi (jujur):** terbukti hanya jaminan lapisan database (append-only, idempotensi, atomik, data basi, rantai versi, batas periode awal-inklusif/akhir-eksklusif, validasi CHECK, isolasi toko, hak peran, tutup periode, replay). **Belum terbukti:** semua rumus uang (menunggu engine), RPC terhadap Postgres Supabase asli, pemulihan di Supabase asli, dan perilaku UI.
+
+Uji keamanan yang sudah ada: UPDATE/DELETE/TRUNCATE ditolak; idempotency; payload berbeda ditolak; data basi ditolak; rantai versi; lintas toko; periode tertutup (koreksi wajib, tak bersambung, tumpang tindih); tutup dengan koreksi kas atomik; `anon`/`authenticated` tanpa akses sama sekali; `app_server` hanya SELECT + RPC (tak bisa INSERT/UPDATE/DELETE langsung, tak bisa membaca `command`); semua tabel ber-RLS; tidak ada kolom/tabel demo, pemilik, atau non-tunai.
+
+---
+
+## 19. Variabel lingkungan dan rahasia
+Lihat `.env.example`. Semua dipakai server lokal: `APP_ENV`, `TOKO_ID`, `DATABASE_URL` (RAHASIA untuk cloud). Deploy migrasi: `SUPABASE_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD` (interaktif). Backup: `BACKUP_DATABASE_URL` (RAHASIA), `AGE_RECIPIENT` (publik). Kunci privat age: hanya pemilik, offline.
+Aturan: tidak ada rahasia di kode, browser, repo, atau prompt; login lewat alur interaktif; kata sandi diketik pemilik sendiri.
+
+---
+
+## 20. Gerbang Data Nyata (wajib sebelum data toko sungguhan)
+- [ ] Terminal/aplikasi berjalan di **komputer sendiri** (bukan sandbox, Codespaces, atau VM jarak jauh); tab Ports kosong
+- [ ] Aplikasi hanya terikat `127.0.0.1`; akses dari perangkat lain dalam jaringan **gagal** (diuji); tidak ada tunnel/hosting
+- [ ] Penjaga Host aktif: permintaan dengan `Host` asing → 403 (diuji)
+- [ ] Gangguan koneksi: DB tak terjangkau → `DB_UNAVAILABLE`, tidak ada yang tersimpan, draft aman, ulang `command_id` tidak menduplikasi (diuji)
+- [ ] Gerbang UX (`docs/UX_GATE.md`) lulus
+- [ ] `.env.local` di `.gitignore`; `scan-secrets` bersih pada repo **dan riwayat git**
+- [ ] Migrasi diterapkan ke proyek cloud; uji peran di cloud lulus (anon/authenticated tanpa akses, `app_server` hanya SELECT + RPC)
+- [ ] Kata sandi `app_server` dibuat pemilik; `DATABASE_URL` hanya di `.env.local`
+- [ ] Cloud bersih dari data uji: `select count(*) from public.event` = 0 (atau reset RUNBOOK §6.2 dijalankan **sebelum** data nyata pertama)
+- [ ] Backup pertama berhasil **dan dipulihkan ke DB kosong dengan checksum identik**; ekspor manual dicoba
+- [ ] Ketentuan Supabase Free dibaca langsung dan dicatat; tidak ada tagihan, kartu, atau add-on aktif
+- [ ] GT1–GT8 dan skenario lulus di engine nyata; paritas preview = simpan
+- [ ] Anggaran Level 1 terpenuhi di layar utama
+- [ ] `engine/v1` dibekukan saat tutup periode nyata pertama
+
+---
+
+## 21. Konsistensi dengan aturan terkunci
+
+| Aturan | Dipenuhi oleh |
+|---|---|
+| Satu engine; preview = save; server memvalidasi ulang | §2.2, §10 |
+| Append-only; tanpa overwrite | trigger §6.2 |
+| Idempotency | `command` + RPC |
+| Periode tertutup beku; koreksi = delta | trigger §6.2 + §10 |
+| Data normal, bukan JSON blob | §6.1 |
+| AI/OCR di luar core | §12 |
+| Barang Dipakai ≠ Pengeluaran | `ev_used` vs `ev_expense`; GT8 |
+| Rp0; tanpa kartu | §3, §16 |
+| Tanpa demo, login, non-tunai | §0, §6.1 (diuji), §7 |
+
+---
+
+## 22. Perubahan dari TRD v2.1
+Dihapus: Cloudflare Workers Static Assets, Worker keep-alive, Edge Functions, Supabase Auth, mode demo (toko demo, batas demo, Pilihan A/B), non-tunai (tabel, kejadian, pengaturan, aturan tunai = penjualan − non-tunai), static export, `_headers`, `supabase-js`.
+Ditambah: peran `app_server` (SELECT + RPC), anon/authenticated tanpa akses sama sekali, aturan "data uji hanya lokal" akibat append-only, ikatan `127.0.0.1`, Server Actions sebagai tempat validasi ulang.
+Tidak berubah: engine, kontrak, fixture golden (kunci `uang.diterima` diganti `uang.masuk_penjualan`), skema kejadian, backup/pemulihan teruji.
