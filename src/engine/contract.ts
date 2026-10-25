@@ -21,6 +21,9 @@ export interface ProductCalculation {
   unknownLossKnown: number;
   certainty: "PASTI" | "PERLU_DIPERIKSA" | "BELUM_DIKETAHUI";
   notes: string[];
+  potentialSalesRevenue: AmountRange;
+  remainingAtSellingPrice: AmountRange;
+  grossProfit: AmountRange;
 }
 
 export interface DepositCheck {
@@ -46,6 +49,10 @@ export interface EngineOutput {
     certainty: "PASTI" | "PERLU_DIPERIKSA" | "BELUM_DIKETAHUI";
     storeCashAfterDeposits: AmountRange;
     totalDeposits: number;
+    potentialSalesRevenue: AmountRange;
+    remainingInventoryAtSellingPrice: AmountRange;
+    grossProfit: AmountRange;
+    netProfit: AmountRange | null;
   };
   depositChecks: DepositCheck[];
   issues: { code: string; message: string; productId?: string; eventId?: string }[];

@@ -8,7 +8,8 @@ describe("purchase preview", () => {
       totalCost: 288000,
       unitCostRounded: 4000,
       sellingPricePerUnit: 7000,
-      unitPriceDifference: 3000
+      unitPriceDifference: 3000,
+      potentialSalesRevenue: 504000
     });
   });
 

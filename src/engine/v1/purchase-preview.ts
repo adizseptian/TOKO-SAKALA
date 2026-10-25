@@ -11,6 +11,7 @@ export interface PurchasePreviewOutput {
   unitCostRounded: number;
   sellingPricePerUnit: number;
   unitPriceDifference: number;
+  potentialSalesRevenue: number;
 }
 
 /** Shared pure preview function; UI must not reimplement purchase arithmetic. */
@@ -24,11 +25,14 @@ export function calculatePurchasePreview(input: PurchasePreviewInput): PurchaseP
   if (!Number.isSafeInteger(totalUnits) || !Number.isSafeInteger(totalCost) || totalUnits < 1) return null;
 
   const unitCostRounded = Math.floor(totalCost / totalUnits + 0.5);
+  const potentialSalesRevenue = totalUnits * input.sellingPricePerUnit;
+
   return {
     totalUnits,
     totalCost,
     unitCostRounded,
     sellingPricePerUnit: input.sellingPricePerUnit,
-    unitPriceDifference: input.sellingPricePerUnit - unitCostRounded
+    unitPriceDifference: input.sellingPricePerUnit - unitCostRounded,
+    potentialSalesRevenue
   };
 }

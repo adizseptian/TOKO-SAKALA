@@ -1,9 +1,18 @@
 import { fileURLToPath, URL } from 'node:url';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  server: {
+    host: '0.0.0.0',
+    port: 3000
+  },
+  preview: {
+    host: '0.0.0.0',
+    port: 3000
+  },
   test: { environment: 'node', include: ['tests/**/*.test.ts'] }
 });

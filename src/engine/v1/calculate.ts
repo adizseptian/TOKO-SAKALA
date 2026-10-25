@@ -10,6 +10,7 @@ interface Pool {
   lastObservedUnits: number | null;
   baselineSeen: boolean;
   unitsSold: number;
+  totalUnitsInPeriod: number;
   salesRevenue: AmountRange;
   costOfSoldKnown: number;
   damageLossKnown: number;
@@ -101,7 +102,7 @@ export function calculate(input: EngineInput): EngineOutput {
     states.set(product.id, {
       knownUnits: 0, knownValue: 0, unknownUnits: 0,
       currentPrice: product.sellingPrice, intervalPrices: [product.sellingPrice],
-      lastObservedUnits: null, baselineSeen: false, unitsSold: 0, salesRevenue: exact(0),
+      lastObservedUnits: null, baselineSeen: false, unitsSold: 0, totalUnitsInPeriod: 0, salesRevenue: exact(0),
       costOfSoldKnown: 0, damageLossKnown: 0, usedLossKnown: 0, unknownLossKnown: 0,
       uncertainCostSold: false, notes: [], certainty: "PASTI"
     });
@@ -136,6 +137,7 @@ export function calculate(input: EngineInput): EngineOutput {
       ensureSafeInteger(purchasedUnits, "purchaseUnits");
       pool.knownUnits += purchasedUnits;
       pool.knownValue += event.totalCost;
+      pool.totalUnitsInPeriod += purchasedUnits;
       ensureSafeInteger(pool.knownUnits, "knownUnitsAfterPurchase");
       ensureSafeInteger(pool.knownValue, "knownValueAfterPurchase");
       if (event.sourceMoney === "STORE") storeCash = subRangeFromNumber(storeCash, event.totalCost);
@@ -157,6 +159,7 @@ export function calculate(input: EngineInput): EngineOutput {
       }
       if (event.unitCost === undefined) pool.unknownUnits += event.units;
       else { pool.knownUnits += event.units; pool.knownValue += event.units * event.unitCost; }
+      pool.totalUnitsInPeriod += event.units;
       pool.lastObservedUnits = event.units;
       pool.baselineSeen = true;
       continue;
@@ -278,6 +281,14 @@ export function calculate(input: EngineInput): EngineOutput {
 
   const productResults: ProductCalculation[] = [...states.entries()].map(([productId, pool]) => {
     const product = productsById.get(productId)!;
+    const potentialSalesRevenue = rangeFromIntervalPrices(pool.totalUnitsInPeriod, pool.intervalPrices);
+    const currentRemainingUnits = pool.lastObservedUnits !== null ? pool.lastObservedUnits : (pool.knownUnits + pool.unknownUnits);
+    const remainingAtSellingPrice = rangeFromIntervalPrices(currentRemainingUnits, [pool.currentPrice]);
+    const grossProfit: AmountRange = {
+      min: pool.salesRevenue.min - pool.costOfSoldKnown,
+      max: pool.salesRevenue.max - pool.costOfSoldKnown
+    };
+
     return {
       productId, name: product.name,
       availableUnits: pool.knownUnits + pool.unknownUnits,
@@ -292,7 +303,10 @@ export function calculate(input: EngineInput): EngineOutput {
       usedLossKnown: pool.usedLossKnown,
       unknownLossKnown: pool.unknownLossKnown,
       certainty: pool.certainty,
-      notes: pool.notes
+      notes: pool.notes,
+      potentialSalesRevenue,
+      remainingAtSellingPrice,
+      grossProfit
     };
   });
 
@@ -304,13 +318,26 @@ export function calculate(input: EngineInput): EngineOutput {
   const knownProfitUpper = salesRevenue.max + otherIncome - costOfGoodsSoldKnown - damageLossKnown - usedLossKnown - unknownLossKnown - expenses;
   const profit = uncertainCostSold ? null : { min: knownProfitLower, max: knownProfitUpper };
 
+  const totalPotentialSalesRevenue: AmountRange = productResults.reduce(
+    (sum, p) => addRange(sum, p.potentialSalesRevenue),
+    exact(0)
+  );
+  const totalRemainingInventoryAtSellingPrice: AmountRange = productResults.reduce(
+    (sum, p) => addRange(sum, p.remainingAtSellingPrice),
+    exact(0)
+  );
+  const totalGrossProfit: AmountRange = {
+    min: salesRevenue.min - costOfGoodsSoldKnown,
+    max: salesRevenue.max - costOfGoodsSoldKnown
+  };
+
   if (uncertainCostSold) globalCertainty = "BELUM_DIKETAHUI";
   else if (hasPriceRange || !allProductsChecked || productResults.some(p => p.certainty !== "PASTI") || issues.length > 0) {
     if (globalCertainty === "PASTI") globalCertainty = "PERLU_DIPERIKSA";
   }
   if (!allProductsChecked) issues.push({ code: "PRODUCT_NOT_CHECKED", message: "Ada barang yang belum memiliki cek sisa. Hasil keseluruhan belum final." });
 
-  for (const range of [salesRevenue, storeCash]) {
+  for (const range of [salesRevenue, storeCash, totalPotentialSalesRevenue, totalRemainingInventoryAtSellingPrice, totalGrossProfit]) {
     ensureSafeInteger(range.min, "range.min");
     ensureSafeInteger(range.max, "range.max");
   }
@@ -329,7 +356,11 @@ export function calculate(input: EngineInput): EngineOutput {
       profit,
       certainty: globalCertainty,
       storeCashAfterDeposits: storeCash,
-      totalDeposits
+      totalDeposits,
+      potentialSalesRevenue: totalPotentialSalesRevenue,
+      remainingInventoryAtSellingPrice: totalRemainingInventoryAtSellingPrice,
+      grossProfit: totalGrossProfit,
+      netProfit: profit
     },
     depositChecks,
     issues

@@ -16,8 +16,8 @@
     "jsx": "react-jsx",
     "types": ["vite/client", "vitest/globals", "node"],
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"]
-    }
+    "paths": { "@/*": ["src/*"] },
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src", "tests", "vite.config.ts"]
 }
