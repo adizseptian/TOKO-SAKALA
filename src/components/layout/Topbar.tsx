@@ -14,7 +14,7 @@ const SCREEN_TITLES: Record<ScreenId, { title: string; subtitle: string }> = {
   barang: { title: 'Katalog Barang', subtitle: 'Daftar produk, harga jual, dan stok saat ini' },
   belanja: { title: 'Catat Belanja', subtitle: 'Input barang masuk, jumlah kemasan, dan modal' },
   'cek-sisa': { title: 'Cek Sisa Fisik', subtitle: 'Perhitungan sisa barang untuk deteksi penjualan' },
-  setoran: { title: 'Uang & Setoran', subtitle: 'Pencatatan kas, biaya operasional, dan setoran' },
+  setoran: { title: 'Setoran dari Karyawan', subtitle: 'Serah terima uang hasil usaha dari karyawan ke owner' },
   laporan: { title: 'Laporan Keuangan', subtitle: 'Rekapitulasi penjualan, laba rugi, dan rekonsiliasi kas' },
   asisten: { title: 'Asisten Pencatatan', subtitle: 'Konversi catatan teks bebas menjadi draft transaksi' },
   riwayat: { title: 'Jejak Riwayat', subtitle: 'Daftar kronologis seluruh aktivitas dan perubahan toko' },

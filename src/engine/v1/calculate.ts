@@ -1,5 +1,5 @@
+import type { AmountRange, DepositCheck, EngineInput, EngineOutput, ProductCalculation, RemittanceStatus } from "@/engine/contract";
 import type { AppEvent, Product } from "@/domain/event";
-import type { AmountRange, DepositCheck, EngineInput, EngineOutput, ProductCalculation } from "@/engine/contract";
 
 interface Pool {
   knownUnits: number;
@@ -121,7 +121,21 @@ export function calculate(input: EngineInput): EngineOutput {
   let globalCertainty: EngineOutput["totals"]["certainty"] = "PASTI";
 
   const markGlobalReview = () => { if (globalCertainty === "PASTI") globalCertainty = "PERLU_DIPERIKSA"; };
-  const events = orderedEvents(input.events);
+
+  // De-duplicate events by event.id or idempotencyKey to ensure strict idempotency (Acceptance 12)
+  const seenIds = new Set<string>();
+  const seenIdempotencyKeys = new Set<string>();
+  const sorted = orderedEvents(input.events);
+  const events: AppEvent[] = [];
+  for (const ev of sorted) {
+    if (seenIds.has(ev.id)) continue;
+    seenIds.add(ev.id);
+    if ((ev as any).idempotencyKey) {
+      if (seenIdempotencyKeys.has((ev as any).idempotencyKey)) continue;
+      seenIdempotencyKeys.add((ev as any).idempotencyKey);
+    }
+    events.push(ev);
+  }
 
   for (const event of events) {
     if (Date.parse(event.occurredAt) > Date.parse(input.asOf)) continue;
@@ -268,11 +282,49 @@ export function calculate(input: EngineInput): EngineOutput {
       continue;
     }
     if (event.type === "deposit") {
-      const expected = storeCash;
+      const expected = { ...storeCash };
       const difference = { min: event.amount - expected.max, max: event.amount - expected.min };
       let certainty: DepositCheck["certainty"] = "PASTI";
       if (expected.min !== expected.max) certainty = "PERLU_DIPERIKSA";
-      depositChecks.push({ eventId: event.id, actualAmount: event.amount, expectedBeforeDeposit: { ...expected }, difference, certainty });
+
+      let status: RemittanceStatus;
+      let statusLabel: string;
+      let explanation: string;
+
+      if (difference.min === 0 && difference.max === 0 && certainty === "PASTI") {
+        status = "COCOK";
+        statusLabel = "Cocok";
+        explanation = "Jumlah yang diterima owner sama dengan jumlah yang seharusnya diserahkan dan semua komponen yang diperlukan pasti.";
+      } else if (certainty !== "PASTI") {
+        status = "PERLU_DIPERIKSA";
+        statusLabel = "Perlu diperiksa";
+        explanation = "Terdapat komponen perhitungan yang belum pasti. Periksa kembali catatan sebelum serah terima difinalisasi.";
+      } else if (difference.max < 0) {
+        status = "BELUM_COCOK";
+        statusLabel = "Belum cocok";
+        const diffVal = Math.abs(difference.max);
+        explanation = `Setoran kurang Rp ${diffVal.toLocaleString('id-ID')} dari perhitungan saat ini. Periksa pengeluaran, belanja yang dibayar dari uang toko, sisa stok, dan saldo sebelumnya.`;
+      } else {
+        status = "PERLU_DIPERIKSA";
+        statusLabel = "Perlu diperiksa";
+        const diffVal = difference.min;
+        explanation = `Owner menerima lebih Rp ${diffVal.toLocaleString('id-ID')} dari perkiraan saat ini. Periksa kemungkinan penjualan belum dicatat, pendapatan lain belum dicatat, salah hitung sisa, atau saldo sebelumnya.`;
+      }
+
+      depositChecks.push({
+        eventId: event.id,
+        actualAmount: event.amount,
+        expectedBeforeDeposit: { ...expected },
+        difference,
+        certainty,
+        status,
+        statusLabel,
+        explanation,
+        employeeName: (event as any).employeeName,
+        notes: (event as any).notes,
+        periodId: (event as any).periodId,
+        occurredAt: event.occurredAt
+      });
       totalDeposits += event.amount;
       storeCash = subRangeFromNumber(storeCash, event.amount);
       continue;
@@ -342,6 +394,21 @@ export function calculate(input: EngineInput): EngineOutput {
     ensureSafeInteger(range.max, "range.max");
   }
 
+  const latestCheck = depositChecks.length > 0 ? depositChecks[depositChecks.length - 1] : null;
+  const remittanceStatus = latestCheck
+    ? {
+        status: latestCheck.status,
+        statusLabel: latestCheck.statusLabel,
+        explanation: latestCheck.explanation,
+        difference: latestCheck.difference
+      }
+    : {
+        status: "MENUNGGU_SETORAN" as RemittanceStatus,
+        statusLabel: "Menunggu setoran",
+        explanation: "Setoran aktual dari karyawan ke owner belum dicatat.",
+        difference: { min: -storeCash.max, max: -storeCash.min }
+      };
+
   return {
     products: productResults,
     totals: {
@@ -357,10 +424,12 @@ export function calculate(input: EngineInput): EngineOutput {
       certainty: globalCertainty,
       storeCashAfterDeposits: storeCash,
       totalDeposits,
+      expectedEmployeeRemittance: storeCash,
       potentialSalesRevenue: totalPotentialSalesRevenue,
       remainingInventoryAtSellingPrice: totalRemainingInventoryAtSellingPrice,
       grossProfit: totalGrossProfit,
-      netProfit: profit
+      netProfit: profit,
+      remittanceStatus
     },
     depositChecks,
     issues

@@ -140,10 +140,17 @@ describe('Export CSV Utility Tests', () => {
           certainty: 'PASTI',
           storeCashAfterDeposits: { min: 54000, max: 54000 },
           totalDeposits: 0,
+          expectedEmployeeRemittance: { min: 246000, max: 246000 },
           potentialSalesRevenue: { min: 336000, max: 336000 },
           remainingInventoryAtSellingPrice: { min: 70000, max: 70000 },
           grossProfit: { min: 114000, max: 114000 },
-          netProfit: { min: 94000, max: 94000 }
+          netProfit: { min: 94000, max: 94000 },
+          remittanceStatus: {
+            status: 'COCOK',
+            statusLabel: 'Cocok',
+            explanation: 'Setoran aktual sesuai dengan uang yang seharusnya diserahkan.',
+            difference: { min: 0, max: 0 }
+          }
         },
         depositChecks: [],
         issues: []

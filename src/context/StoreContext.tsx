@@ -145,7 +145,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           potentialSalesRevenue: { min: 0, max: 0 },
           remainingInventoryAtSellingPrice: { min: 0, max: 0 },
           grossProfit: { min: 0, max: 0 },
-          netProfit: { min: 0, max: 0 }
+          netProfit: { min: 0, max: 0 },
+          expectedEmployeeRemittance: { min: 0, max: 0 },
+          remittanceStatus: {
+            status: 'MENUNGGU_SETORAN',
+            statusLabel: 'Menunggu setoran',
+            explanation: 'Belum ada catatan setoran.',
+            difference: { min: 0, max: 0 }
+          }
         },
         depositChecks: [],
         issues: [{ code: 'CALC_ERROR', message: 'Terjadi kesalahan perhitungan engine.' }]
@@ -189,10 +196,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const addEvent = (eventData: CreateEventInput) => {
     setIsLoading(true);
+    // Idempotency protection (Acceptance 12)
+    if ((eventData as any).id && events.some((e) => e.id === (eventData as any).id)) {
+      setIsLoading(false);
+      return;
+    }
+    if ((eventData as any).idempotencyKey && events.some((e: any) => e.idempotencyKey === (eventData as any).idempotencyKey)) {
+      setIsLoading(false);
+      return;
+    }
+
     const nextSeq = events.length > 0 ? Math.max(...events.map((e) => e.seq)) + 1 : 1;
     const newEvent: AppEvent = {
       ...eventData,
-      id: generateId('ev'),
+      id: (eventData as any).id || generateId('ev'),
       seq: nextSeq,
       occurredAt: eventData.occurredAt || new Date().toISOString()
     } as AppEvent;

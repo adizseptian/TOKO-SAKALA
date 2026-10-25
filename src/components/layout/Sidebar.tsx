@@ -36,7 +36,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { id: 'barang', label: 'Katalog Barang', icon: Package, section: 'utama' },
   { id: 'belanja', label: 'Catat Belanja', icon: ShoppingBasket, section: 'utama' },
   { id: 'cek-sisa', label: 'Cek Sisa Fisik', icon: ClipboardCheck, section: 'utama' },
-  { id: 'setoran', label: 'Uang & Setoran', icon: Banknote, section: 'utama' },
+  { id: 'setoran', label: 'Setoran Karyawan', icon: Banknote, section: 'utama' },
   { id: 'laporan', label: 'Laporan Toko', icon: FileChartColumn, section: 'utama' },
   { id: 'asisten', label: 'Asisten Catatan', icon: Sparkles, section: 'sistem' },
   { id: 'riwayat', label: 'Jejak Riwayat', icon: History, section: 'sistem' },

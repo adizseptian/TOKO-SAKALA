@@ -1,7 +1,7 @@
 import type { AppEvent, Product, MoneySource, Certainty } from '@/domain/event';
-import type { EngineOutput, ProductCalculation, DepositCheck } from '@/engine/contract';
+import type { EngineOutput, ProductCalculation, DepositCheck, RemittanceStatus } from '@/engine/contract';
 
-export type { AppEvent, Product, MoneySource, Certainty, EngineOutput, ProductCalculation, DepositCheck };
+export type { AppEvent, Product, MoneySource, Certainty, EngineOutput, ProductCalculation, DepositCheck, RemittanceStatus };
 
 export type ScreenId =
   | 'beranda'

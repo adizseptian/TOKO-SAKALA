@@ -187,42 +187,86 @@ export function ReportsScreen() {
         </article>
       </section>
 
-      {/* Cash & Deposit Status */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <article className="sakala-card p-4 flex items-center justify-between">
+      {/* Remittance & Employee Cash Section (Lock v1.1) */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <article className="sakala-card p-4 flex flex-col justify-between space-y-2">
           <div className="space-y-0.5">
-            <div className="flex items-center gap-2">
-              <Wallet className="w-4 h-4 text-[var(--accent-mint)]" />
+            <div className="flex items-center gap-1.5">
+              <Wallet className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               <span className="text-xs font-semibold text-[var(--text-main)]">
-                Uang yang Seharusnya Tersedia
+                Seharusnya Diserahkan
               </span>
             </div>
             <span className="text-[11px] text-[var(--text-dim)] block">
-              Saldo kas fisik yang wajib ada di laci toko
+              Uang usaha yang semestinya diserahkan karyawan
             </span>
           </div>
-          <strong className="text-lg font-bold tabular-nums text-[var(--text-main)]">
+          <strong className="text-base sm:text-lg font-bold tabular-nums text-sky-700 dark:text-sky-400">
+            {formatRupiah(totals.expectedEmployeeRemittance?.min ?? totals.salesRevenue.min)}
+          </strong>
+        </article>
+
+        <article className="sakala-card p-4 flex flex-col justify-between space-y-2">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <Banknote className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-xs font-semibold text-[var(--text-main)]">
+                Diterima Owner
+              </span>
+            </div>
+            <span className="text-[11px] text-[var(--text-dim)] block">
+              Setoran aktual yang telah diterima pemilik
+            </span>
+          </div>
+          <strong className="text-base sm:text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatRupiah(totals.totalDeposits)}
+          </strong>
+        </article>
+
+        <article className="sakala-card p-4 flex flex-col justify-between space-y-2">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <Wallet className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              <span className="text-xs font-semibold text-[var(--text-main)]">
+                Dipegang Karyawan
+              </span>
+            </div>
+            <span className="text-[11px] text-[var(--text-dim)] block">
+              Sisa saldo kas di tangan karyawan / kasir
+            </span>
+          </div>
+          <strong className="text-base sm:text-lg font-bold tabular-nums text-[var(--text-main)]">
             {totals.storeCashAfterDeposits.min === totals.storeCashAfterDeposits.max
               ? formatRupiah(totals.storeCashAfterDeposits.min)
               : `${formatRupiah(totals.storeCashAfterDeposits.min)} - ${formatRupiah(totals.storeCashAfterDeposits.max)}`}
           </strong>
         </article>
 
-        <article className="sakala-card p-4 flex items-center justify-between">
+        <article className="sakala-card p-4 flex flex-col justify-between space-y-2">
           <div className="space-y-0.5">
-            <div className="flex items-center gap-2">
-              <Banknote className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-teal-600 dark:text-teal-400" />
               <span className="text-xs font-semibold text-[var(--text-main)]">
-                Setoran Aktual
+                Status Serah-Terima
               </span>
             </div>
-            <span className="text-[11px] text-[var(--text-dim)] block">
-              Total uang fisik yang telah disetor / diambil pemilik
+            <span className="text-[11px] text-[var(--text-dim)] block truncate">
+              {totals.remittanceStatus?.statusLabel || 'Menunggu Setoran'}
             </span>
           </div>
-          <strong className="text-lg font-bold tabular-nums text-teal-700 dark:text-teal-400">
-            {formatRupiah(totals.totalDeposits)}
-          </strong>
+          <div className="text-xs">
+            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${
+              totals.remittanceStatus?.status === 'COCOK'
+                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                : totals.remittanceStatus?.status === 'BELUM_COCOK'
+                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
+                : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+            }`}>
+              {totals.remittanceStatus?.difference && totals.remittanceStatus.difference.min !== 0
+                ? (totals.remittanceStatus.difference.min > 0 ? `+${formatRupiah(totals.remittanceStatus.difference.min)}` : formatRupiah(totals.remittanceStatus.difference.min))
+                : (totals.remittanceStatus?.statusLabel || 'Cocok')}
+            </span>
+          </div>
         </article>
       </section>
 

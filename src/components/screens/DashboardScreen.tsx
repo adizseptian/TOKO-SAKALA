@@ -153,11 +153,11 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           </div>
         </article>
 
-        {/* Tile 2: Soft Sky Blue -> Kas di Laci */}
+        {/* Tile 2: Soft Sky Blue -> Saldo Kas Karyawan */}
         <article className="p-5 rounded-3xl bg-[#eaf4fb] dark:bg-[#16223b] border border-[#c5e1f7] dark:border-[#38bdf8]/40 space-y-3 transition-transform hover:-translate-y-0.5 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-extrabold text-[#034f78] dark:text-[#7dd3fc] uppercase tracking-wider">
-              Kas di Laci
+              Kas Karyawan
             </span>
             <div className="w-8 h-8 rounded-full bg-[#0284c7]/20 dark:bg-[#38bdf8]/25 text-[#034f78] dark:text-[#7dd3fc] flex items-center justify-center">
               <Wallet className="w-4 h-4" />
@@ -168,7 +168,7 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
               {storeCashText}
             </span>
             <span className="text-[11px] font-medium text-[#034f78] dark:text-[#bae6fd] mt-1 block">
-              Saldo uang riil kasir
+              Saldo dipegang karyawan
             </span>
           </div>
         </article>
@@ -495,8 +495,8 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
                           };
                         case 'deposit':
                           return {
-                            label: 'Setoran Kas',
-                            desc: `Disetor: Rp ${ev.amount.toLocaleString('id-ID')}`,
+                            label: 'Setoran Karyawan',
+                            desc: `${ev.employeeName ? `Dari ${ev.employeeName}: ` : ''}Rp ${ev.amount.toLocaleString('id-ID')}`,
                             badge: 'bg-[#eaf4fb] text-[#034f78] dark:bg-[#38bdf8]/25 dark:text-[#7dd3fc]'
                           };
                         case 'other_income':
@@ -599,10 +599,10 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
               </div>
               <div className="flex-1 min-w-0">
                 <strong className="text-xs font-bold text-[var(--text-main)] block">
-                  Uang Kas & Setoran
+                  Setoran dari Karyawan
                 </strong>
                 <span className="text-[11px] text-[var(--text-muted)] block truncate">
-                  Catat operasional & setor bank
+                  Serah-terima uang & kas operasional
                 </span>
               </div>
               <ArrowRight className="w-4 h-4 text-[var(--text-dim)] group-hover:translate-x-1 group-hover:text-[var(--primary)] transition-all" />

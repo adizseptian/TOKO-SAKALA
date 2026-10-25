@@ -152,10 +152,10 @@ export function serializeTransactionsToCSV(
         break;
       }
       case 'deposit': {
-        typeLabel = 'Setoran Kas';
-        desc = 'Setoran pemilik toko';
+        typeLabel = 'Setoran dari Karyawan';
+        desc = ev.employeeName ? `Diserahkan oleh ${ev.employeeName}${ev.notes ? ` (${ev.notes})` : ''}` : (ev.notes || 'Serah terima uang usaha ke owner');
         amount = ev.amount;
-        source = 'Kas Toko';
+        source = 'Kas Karyawan / Toko';
         break;
       }
       case 'price_change': {
@@ -421,8 +421,9 @@ export function generateReportPDF(options: {
     ['Pengeluaran Operasional Toko', `-${formatRupiah(totals.expenses)}`, 'normal'],
     ['Kerugian Kerusakan / Pemakaian Sendiri', `-${formatRupiah(totals.damageLossKnown + totals.usedLossKnown + totals.unknownLossKnown)}`, 'normal'],
     ['Estimasi Laba Bersih Final', formatRupiah(netProfit), 'highlight'],
-    ['Uang yang Seharusnya Tersedia di Laci Toko', formatRupiah(totals.storeCashAfterDeposits.min), 'cash'],
-    ['Setoran Aktual Kas Pemilik', formatRupiah(totals.totalDeposits), 'cash']
+    ['Uang Seharusnya Diserahkan Karyawan', formatRupiah(totals.expectedEmployeeRemittance?.min ?? totals.salesRevenue.min), 'cash'],
+    ['Setoran Aktual Diterima Owner', formatRupiah(totals.totalDeposits), 'cash'],
+    ['Saldo Kas yang Masih Dipegang Karyawan', formatRupiah(totals.storeCashAfterDeposits.min), 'cash']
   ];
 
   incomeItems.forEach(([label, val, style]) => {
