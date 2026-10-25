@@ -17,6 +17,8 @@ import { useStore } from '@/context/StoreContext';
 import { calculatePurchasePreview } from '@/engine/v1/purchase-preview';
 import { formatRupiah, formatNumber } from '@/lib/utils';
 import { Modal } from '@/components/ui/Modal';
+import { WorkflowStepBanner } from '@/components/WorkflowStepBanner';
+import { WorkflowGuideModal } from '@/components/WorkflowGuideModal';
 
 interface PurchaseScreenProps {
   initialProduct?: Product | null;
@@ -40,6 +42,7 @@ export function PurchaseScreen({ initialProduct }: PurchaseScreenProps) {
 
   // Quick add product modal
   const [isNewProdModalOpen, setIsNewProdModalOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [newProdName, setNewProdName] = useState('');
   const [newProdSellingPrice, setNewProdSellingPrice] = useState('5000');
 
@@ -155,6 +158,15 @@ export function PurchaseScreen({ initialProduct }: PurchaseScreenProps) {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
+      {/* Step 1 Workflow Banner */}
+      <WorkflowStepBanner
+        step={1}
+        title="Catat Belanja Barang Masuk"
+        subtitle="Input jumlah kemasan (dus/pak), isi per kemasan, dan harga beli modal. Sistem otomatis menghitung jumlah unit masuk dan potensi Keuntungan Jual."
+        ruleTip="Keuntungan Jual = nilai jual jika semua barang terjual (belum dikurangi modal beli, bukan laba bersih)."
+        onOpenGuide={() => setIsGuideOpen(true)}
+      />
+
       {/* Purchase Session Progress Bar Card */}
       <div className="sakala-card p-4 space-y-3 print-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -618,6 +630,11 @@ export function PurchaseScreen({ initialProduct }: PurchaseScreenProps) {
           </div>
         </form>
       </Modal>
+
+      <WorkflowGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+      />
     </motion.div>
   );
 }

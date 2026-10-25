@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
-import { Menu, Plus, Moon, Sun, ShoppingBasket, Calendar } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Menu, Plus, Moon, Sun, ShoppingBasket, Calendar, HelpCircle } from 'lucide-react';
 import type { ScreenId } from '@/types/store';
 import { useStore } from '@/context/StoreContext';
+import { WorkflowGuideModal } from '@/components/WorkflowGuideModal';
 
 interface TopbarProps {
   currentScreen: ScreenId;
@@ -23,6 +24,7 @@ const SCREEN_TITLES: Record<ScreenId, { title: string; subtitle: string }> = {
 
 export function Topbar({ currentScreen, onOpenMobile, onQuickAction }: TopbarProps) {
   const { theme, setTheme } = useStore();
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const screenInfo = SCREEN_TITLES[currentScreen] || {
     title: 'TOKO SAKALA',
     subtitle: 'Sistem Pencatatan Toko'
@@ -80,6 +82,16 @@ export function Topbar({ currentScreen, onOpenMobile, onQuickAction }: TopbarPro
       <div className="flex items-center gap-2.5 shrink-0">
         <button
           type="button"
+          onClick={() => setIsGuideOpen(true)}
+          className="sakala-btn sakala-btn-secondary h-10 px-3 text-xs rounded-2xl flex items-center gap-1.5 font-semibold"
+          title="Buka panduan 4 langkah alur kerja Toko Sakala"
+        >
+          <HelpCircle className="w-4 h-4 text-[var(--primary)]" />
+          <span className="hidden sm:inline">Panduan Alur</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           className="p-2.5 rounded-2xl text-[var(--text-muted)] hover:text-[var(--text-main)] bg-[var(--bg-elevated)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] transition-colors"
           aria-label={`Ubah ke mode ${theme === 'dark' ? 'terang' : 'gelap'}`}
@@ -98,6 +110,11 @@ export function Topbar({ currentScreen, onOpenMobile, onQuickAction }: TopbarPro
           <ShoppingBasket className="w-4 h-4 sm:hidden" />
         </button>
       </div>
+
+      <WorkflowGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+      />
     </header>
   );
 }

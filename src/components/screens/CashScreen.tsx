@@ -18,6 +18,8 @@ import { useStore } from '@/context/StoreContext';
 import { formatRupiah, formatDateTime } from '@/lib/utils';
 import type { MoneySource, RemittanceStatus } from '@/types/store';
 import { Modal } from '@/components/ui/Modal';
+import { WorkflowStepBanner } from '@/components/WorkflowStepBanner';
+import { WorkflowGuideModal } from '@/components/WorkflowGuideModal';
 
 export function CashScreen() {
   const { engineOutput, addEvent, notify } = useStore();
@@ -42,6 +44,7 @@ export function CashScreen() {
 
   // Modal explanation "Lihat Perhitungan / Kenapa?"
   const [isWhyModalOpen, setIsWhyModalOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [selectedDepositForWhy, setSelectedDepositForWhy] = useState<any | null>(null);
 
   // Cash and Remittance values
@@ -165,6 +168,15 @@ export function CashScreen() {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
+      {/* Step 3 & 4 Workflow Banner */}
+      <WorkflowStepBanner
+        step={4}
+        title="Catat Biaya Toko & Serah-Terima Setoran Karyawan"
+        subtitle="Catat pengeluaran kas toko dari sumber yang sah, lalu catat uang nyata yang diterima owner dari karyawan untuk mengecek selisih dan status kecocokan."
+        ruleTip="Setoran adalah serah-terima fisik kas karyawan ke owner (bukan setor bank & tidak mengubah laba toko)."
+        onOpenGuide={() => setIsGuideOpen(true)}
+      />
+
       {/* 4 Overview Metric Tiles for Cash & Remittance Lock v1.1 */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Tile 1: Uang yang Seharusnya Diserahkan Karyawan */}
@@ -671,6 +683,11 @@ export function CashScreen() {
           </div>
         </div>
       </Modal>
+
+      <WorkflowGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+      />
     </motion.div>
   );
 }

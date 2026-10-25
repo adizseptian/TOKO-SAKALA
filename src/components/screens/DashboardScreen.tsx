@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   TrendingUp,
   Wallet,
@@ -12,12 +13,14 @@ import {
   Sparkles,
   ArrowUpRight,
   ShieldCheck,
-  Layers
+  Layers,
+  HelpCircle
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { ScreenId } from '@/types/store';
 import { useStore } from '@/context/StoreContext';
 import { formatRupiah, formatNumber, formatDateTime } from '@/lib/utils';
+import { WorkflowGuideModal } from '@/components/WorkflowGuideModal';
 
 interface DashboardScreenProps {
   onNavigate: (screen: ScreenId) => void;
@@ -26,6 +29,8 @@ interface DashboardScreenProps {
 export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
   const { engineOutput, products, events } = useStore();
   const { totals, issues } = engineOutput;
+
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   // Profit display text
   const profitText = totals.profit
@@ -130,6 +135,150 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           </button>
         </section>
       )}
+
+      {/* Interactive 4-Step Retail Workflow Stepper */}
+      <section className="sakala-card p-5 rounded-3xl space-y-4 border border-[var(--border-subtle)] shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-[var(--primary)]" />
+            <h3 className="text-xs font-bold text-[var(--text-main)] uppercase tracking-wider">
+              Alur 4 Langkah Kerja Toko Sakala
+            </h3>
+            <span className="text-[11px] text-[var(--text-dim)]">· Siklus Harian</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsGuideOpen(true)}
+            className="text-xs font-bold text-[var(--primary)] hover:underline flex items-center gap-1.5 self-start sm:self-auto"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>Lihat Panduan Alur (Kenapa & Bagaimana?)</span>
+          </button>
+        </div>
+
+        {/* 4 Steps Interactive Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Step 1 */}
+          <div
+            onClick={() => onNavigate('belanja')}
+            className="p-3.5 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[#e06346] hover:bg-[#ffeae5]/30 dark:hover:bg-[#16223b] transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+          >
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="w-6 h-6 rounded-lg bg-[#ffeae5] dark:bg-[#e06346]/20 text-[#8c2612] dark:text-[#ff927f] font-bold text-xs flex items-center justify-center">
+                  1
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8c2612] dark:text-[#ff927f]">
+                  Barang Masuk
+                </span>
+              </div>
+              <strong className="text-xs font-bold text-[var(--text-main)] block">
+                Catat Belanja
+              </strong>
+              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+                Input dus, kemasan, harga modal, dan potensi Keuntungan Jual.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px] font-semibold text-[var(--primary)]">
+              <span>Buka Form Belanja</span>
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Step 2 */}
+          <div
+            onClick={() => onNavigate('cek-sisa')}
+            className="p-3.5 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[#10b981] hover:bg-[#e7f7f0]/30 dark:hover:bg-[#16223b] transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+          >
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="w-6 h-6 rounded-lg bg-[#e7f7f0] dark:bg-[#2dd4bf]/20 text-[#056045] dark:text-[#5eead4] font-bold text-xs flex items-center justify-center">
+                  2
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#056045] dark:text-[#5eead4]">
+                  Otomatis Laku
+                </span>
+              </div>
+              <strong className="text-xs font-bold text-[var(--text-main)] block">
+                Cek Sisa Fisik Rak
+              </strong>
+              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+                Ketik sisa barang di rak. Sistem otomatis hitung barang yang laku.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+              <span>Cek Sisa Fisik</span>
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Step 3 */}
+          <div
+            onClick={() => onNavigate('setoran')}
+            className="p-3.5 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[#7c3aed] hover:bg-[#f2eafa]/30 dark:hover:bg-[#16223b] transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+          >
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="w-6 h-6 rounded-lg bg-[#f2eafa] dark:bg-[#a78bfa]/20 text-[#5519b5] dark:text-[#c4b5fd] font-bold text-xs flex items-center justify-center">
+                  3
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#5519b5] dark:text-[#c4b5fd]">
+                  Operasional
+                </span>
+              </div>
+              <strong className="text-xs font-bold text-[var(--text-main)] block">
+                Catat Biaya Toko
+              </strong>
+              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+                Biaya kas toko mengurangi uang yang harus disetor karyawan.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px] font-semibold text-[#7c3aed] dark:text-[#c4b5fd]">
+              <span>Catat Pengeluaran</span>
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Step 4 */}
+          <div
+            onClick={() => onNavigate('setoran')}
+            className="p-3.5 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[#0284c7] hover:bg-[#eaf4fb]/30 dark:hover:bg-[#16223b] transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+          >
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="w-6 h-6 rounded-lg bg-[#eaf4fb] dark:bg-[#38bdf8]/20 text-[#034f78] dark:text-[#7dd3fc] font-bold text-xs flex items-center justify-center">
+                  4
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#034f78] dark:text-[#7dd3fc]">
+                  Serah-Terima
+                </span>
+              </div>
+              <strong className="text-xs font-bold text-[var(--text-main)] block">
+                Terima Setoran
+              </strong>
+              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+                Owner terima uang nyata dari karyawan. Cek status & selisih.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px] font-semibold text-[#0284c7] dark:text-[#38bdf8]">
+              <span>Form Serah-Terima</span>
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+        </div>
+
+        {/* 2 Quick Rule Badges */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+          <div className="px-3.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-500/25 flex items-center gap-2 text-amber-900 dark:text-amber-200 text-[11px]">
+            <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span><strong>Keuntungan Jual</strong> = nilai jika semua terjual (belum potong modal, bukan laba).</span>
+          </div>
+          <div className="px-3.5 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-500/25 flex items-center gap-2 text-sky-900 dark:text-sky-200 text-[11px]">
+            <Banknote className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+            <span><strong>Setoran Karyawan</strong> = serah-terima fisik kas ke owner (bukan setor ke bank).</span>
+          </div>
+        </div>
+      </section>
 
       {/* 5 BrightPolicy Pastel KPI Tiles in a Row */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
@@ -629,6 +778,12 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           </div>
         </section>
       </div>
+
+      <WorkflowGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+        onNavigate={onNavigate}
+      />
     </motion.div>
   );
 }

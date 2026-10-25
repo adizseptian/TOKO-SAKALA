@@ -20,6 +20,8 @@ import { motion } from 'motion/react';
 import { useStore } from '@/context/StoreContext';
 import { formatRupiah, formatNumber, formatDateTime } from '@/lib/utils';
 import { Modal } from '@/components/ui/Modal';
+import { WorkflowStepBanner } from '@/components/WorkflowStepBanner';
+import { WorkflowGuideModal } from '@/components/WorkflowGuideModal';
 import {
   type StockRow,
   type ExpenseRow,
@@ -59,6 +61,7 @@ export function StockCheckScreen() {
   // Search filter and status filter
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'incomplete' | 'complete'>('all');
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   // Session storage auto-save & restore states
   const [hasRestorableSession, setHasRestorableSession] = useState<{
@@ -318,6 +321,15 @@ export function StockCheckScreen() {
           </div>
         </div>
       </div>
+
+      {/* Step 2 Workflow Banner */}
+      <WorkflowStepBanner
+        step={2}
+        title="Cek Sisa Fisik Rak Toko"
+        subtitle="Cukup masukkan jumlah sisa barang yang ada di rak toko dalam tabel bersama. Sistem otomatis mendeteksi penjualan: Unit Terjual = Stok Ada − Sisa Rak."
+        ruleTip="Penjualan dihitung otomatis dari selisih fisik tanpa kasir perlu mengetik transaksi satu per satu."
+        onOpenGuide={() => setIsGuideOpen(true)}
+      />
 
       {/* Screen Header & Top Action Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-[var(--border-subtle)] print-hidden">
@@ -988,6 +1000,11 @@ export function StockCheckScreen() {
           </div>
         </div>
       </Modal>
+
+      <WorkflowGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+      />
     </motion.div>
   );
 }
