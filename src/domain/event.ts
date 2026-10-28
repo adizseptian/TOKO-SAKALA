@@ -24,16 +24,9 @@ export const AppEventSchema = z.discriminatedUnion("type", [
   EventBase.extend({ type: z.literal("stock_check"), productId: z.string().min(1), observedUnits: QuantitySchema }),
   EventBase.extend({ type: z.literal("loss"), productId: z.string().min(1), reason: z.enum(["DAMAGE", "USED", "UNKNOWN"]), units: QuantitySchema.refine(v => v > 0) }),
   EventBase.extend({ type: z.literal("expense"), description: z.string().trim().min(1).max(160), amount: RupiahSchema.refine(v => v > 0), sourceMoney: MoneySourceSchema }),
-  EventBase.extend({
-    type: z.literal("deposit"),
-    amount: RupiahSchema.refine(v => v > 0),
-    employeeName: z.string().trim().max(120).optional(),
-    periodId: z.string().trim().max(80).optional(),
-    notes: z.string().trim().max(240).optional(),
-    idempotencyKey: z.string().trim().max(120).optional()
-  }),
   EventBase.extend({ type: z.literal("other_income"), description: z.string().trim().min(1).max(160), amount: RupiahSchema.refine(v => v > 0) }),
-  EventBase.extend({ type: z.literal("cash_adjustment"), reason: z.string().trim().min(1).max(160), amount: z.number().int() }),
+  EventBase.extend({ type: z.literal("deposit"), amount: RupiahSchema.refine(v => v > 0) }),
+  EventBase.extend({ type: z.literal("cash_adjustment"), amount: z.number().int().safe(), reason: z.string().trim().min(1).max(240) }),
   EventBase.extend({ type: z.literal("price_change"), productId: z.string().min(1), sellingPrice: RupiahSchema }),
   EventBase.extend({ type: z.literal("no_sales_statement"), productId: z.string().min(1), noSales: z.literal(true) })
 ]);

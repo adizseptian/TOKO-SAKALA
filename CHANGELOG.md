@@ -1,12 +1,14 @@
 # Changelog
 
-## v0.2.0 — Google AI Studio adapter
-- Mengganti entry point framework starter dari Next.js App Router menjadi React + Vite + TypeScript untuk memudahkan impor Build mode.
-- Menambahkan `metadata.json` tanpa permintaan izin perangkat.
-- Menambahkan sakelar Asisten AI OFF/ON (default OFF); panel ON masih placeholder dan tidak memanggil model AI.
-- Mempertahankan engine awal, Zod schemas, golden tests, 16 dokumen spesifikasi, dan migration SQL draft.
-- Menghapus kebutuhan menyertakan `.git` pada ZIP agar tidak menimpa metadata GitHub Desktop repository yang sudah ada.
-- Menambah instruksi mengganti file pada clone yang sudah ada, lalu commit + Push origin.
+## v0.5.1 — QA corrections (2026-10-28)
+- Corrected stale README heading and active design identity to TOKO MODE.
+- Changed the browser theme-color meta tag to the light TOKO MODE paper token.
+- Replaced sidebar “FIELD LEDGER” label with “TOKO MODE”.
+- Applied orange/lime styling to the actual Home status-panel class and maintained high-contrast text/actions in light and dark themes.
+- Increased mobile navigation label size and retained a 48px minimum target height. Expanded mobile icon, row-remove and quick-chip targets to 44px in CSS (static only; rendering still needs browser verification).
+- Replaced mixed-unit `totalRemainingUnits` with `remainingByUnit`, preserving units separately.
+- Guarded line preview calculations so unsafe row values do not throw during React rendering; oversized whole stock totals are surfaced as an error and block the review action.
+- Added explicit unit-specific test expectations for pcs and porsi quantities.
 
-## Batas versi
-Tidak ada persistence transaksi dan belum siap untuk data toko nyata. Adaptasi framework belum mengunci arsitektur produksi akhir.
+## v0.5.0
+- Applied TOKO MODE bright retail visual layer to React/Vite starter.

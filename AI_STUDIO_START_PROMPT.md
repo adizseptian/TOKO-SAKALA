@@ -1,57 +1,47 @@
-# PROMPT AUDIT AWAL — GOOGLE AI STUDIO BUILD
+# PROMPT AUDIT & LANJUTAN — GOOGLE AI STUDIO BUILD
 
-Kamu melanjutkan repository TOKO SAKALA. **Jangan langsung mengubah banyak file. Audit dulu.**
+Lanjutkan repository TOKO SAKALA yang sudah ada. Jangan membuat proyek baru dan jangan menulis ulang seluruh aplikasi.
+
+## Prioritas UI terbaru: cek sisa barang satu tabel
+
+Baca `docs/specs/17_ALUR_CEK_SISA_SEKALIGUS.md` dan audit implementasinya pada `src/App.tsx`, `src/styles.css`, serta `src/engine/v1/stock-check-preview.ts`.
+
+Kebutuhan produk:
+- Pengguna bisa memeriksa banyak barang dari satu tabel: nama, kategori opsional, sisa sekarang, harga jual per item, dan nilai sisa otomatis.
+- Gunakan bahasa Indonesia sehari-hari: “Sisa sekarang”, “Harga jual / item”, “Pengeluaran toko”, “Tinjau ringkasan”. Jangan pakai HPP/COGS/jurnal/re konsiliasi dalam UI utama.
+- Satu field “Sisa sekarang” cukup; jangan duplikasi input “isi/sisa” dengan “jumlah item” apabila satuannya memang sama.
+- Baris kosong diabaikan, sisa 0 sah, baris setengah terisi ditandai.
+- Total `sisa × harga jual` harus dilabeli sebagai nilai sisa pada harga jual, bukan modal, kas, atau keuntungan.
+- Pengeluaran dipisahkan dari stok. AI OFF default; jangan panggil model AI/API.
+- “Lihat contoh tabel” hanya memuat draf di layar dan harus jelas bahwa draf tidak disimpan.
+- Cetak / Simpan PDF memakai print stylesheet hanya sebagai print preview; jangan mengklaim itu ekspor laporan keuangan tersimpan.
+- Tombol penyimpanan transaksi tetap nonaktif sampai backend aman selesai.
+
+## Validasi data contoh
+
+Foto referensi mempunyai subtotal nilai sisa menurut harga jual Rp524.000 untuk 15 baris yang terbaca lengkap; ChocoPie tidak lengkap sehingga tidak ikut jumlah. Jumlah unit dari 15 baris lengkap adalah 318. Ini hanya validasi alur/tabel, bukan sumber stok nyata.
 
 ## Tugas pertama
 
-1. Baca `README.md`, `docs/GOOGLE_AI_STUDIO_ADAPTER.md`, `docs/DECISION_REGISTER.md`, `docs/BUILD_STATUS.md`, semua 16 dokumen di `docs/specs/`, dan sumber business logic di `docs/sources/`.
-2. Audit struktur repository dan cek apakah proyek ini dapat dijalankan pada runtime Google AI Studio Build.
-3. Jalankan `npm install`, `npm run test`, dan `npm run build` jika runtime mendukung. Laporkan hasil nyata; jangan mengklaim lulus kalau tidak dijalankan.
-4. Jika ada error, perbaiki error build yang spesifik tanpa menulis ulang seluruh UI atau mengubah aturan bisnis.
-5. Pertahankan tampilan Indonesia, dark-first Deep Teal + Warm Ivory, responsif, dan tanpa violet.
+1. Baca `README.md`, `docs/BUILD_STATUS.md`, `docs/DECISION_REGISTER.md`, semua dokumen pada `docs/specs/`, termasuk `17_ALUR_CEK_SISA_SEKALIGUS.md` dan `18_REPORTING_EXPORT_SPEC.md`, serta `docs/UI_UX_REFINEMENT_PROMPT_v1.1.md`.
+2. Jalankan `npm install`, `npm run test`, `npm run build`, dan `npm run scan:secrets` jika runtime mendukung. Laporkan hasil nyata, jangan mengklaim lulus kalau belum dijalankan.
+3. Perbaiki error yang dapat direproduksi secara terisolasi.
+4. Pastikan seluruh tombol yang aktif melakukan aksi nyata; jangan memasang tombol dekoratif.
+5. Periksa ukuran layar desktop, tablet, dan ponsel serta dialog cetak.
 
-## Pengaturan Asisten AI
+## Kunci produk
 
-- Asisten AI default **OFF**.
-- Sakelar di Pengaturan dapat ON/OFF.
-- Pada versi ini ON hanya menampilkan panel UI. `AI_INTEGRATION_CONNECTED` tetap false dan tidak boleh ada panggilan model.
-- Jangan menambah Gemini API, `GEMINI_API_KEY`, OCR, atau panggilan jaringan AI sampai diminta secara eksplisit.
-- Jika kelak diminta mengintegrasikan AI, gunakan server-side secret yang dikelola AI Studio; jangan expose secret ke client atau `VITE_*`. Saat OFF, tidak boleh ada permintaan AI yang dikirim.
-- AI hanya menyusun usulan; engine murni menghitung dan server memvalidasi. Jangan biarkan AI menulis transaksi langsung.
-
-## Aturan produk yang terkunci
-
-- Prinsip: “Jangan membuat pengguna memahami sistem. Buat sistem yang memahami pengguna.”
-- UI B: sederhana tetapi modern; prioritas seimbang antara kemudahan dan akurasi.
-- Pengguna memasukkan kejadian; sistem menghitung, memeriksa, dan menjelaskan.
+- Prinsip utama: “Jangan membuat pengguna memahami sistem. Buat sistem yang memahami pengguna.”
 - Keuntungan ≠ uang toko ≠ setoran.
-- Stok sisa adalah input; barang terjual adalah hasil hanya jika matematis valid.
-- Modal tak diketahui tidak boleh dikarang.
-- Barang rusak, dipakai, dan penyebab penurunan tak diketahui tetap berbeda.
-- Restock tidak membuat periode baru.
-- Harga beli/jual dan isi kemasan memiliki riwayat, tidak ditimpa.
-- Catatan penting append-only; edit adalah versi baru, pembatalan adalah void, koreksi setelah periode ditutup harus terlacak.
-- Rupiah/kuantitas dalam integer aman. Hindari floating-point untuk uang.
-- Tidak ada transaksi non-tunai, piutang, multi-user, atau hosting publik tanpa keputusan baru.
-- Jangan mengaktifkan penyimpanan transaksi sampai backend atomik, idempotency, validasi server, dan pengujian keamanan tersedia.
+- Modal tidak diketahui jangan dikarang.
+- Sisa barang merupakan input; penjualan hanya hasil engine jika stok dan data pendukung dapat dijelaskan.
+- Riwayat tidak boleh berubah diam-diam.
+- `localStorage` hanya untuk preferensi UI, bukan data transaksi.
+- AI default OFF dan belum terhubung. Jangan menambah API key atau mengirim data ke layanan eksternal.
+- Jangan aktifkan penyimpanan transaksi sampai backend atomik, idempotensi, validasi server, jejak audit, kontrol akses, serta backup/pemulihan diuji.
 
-## Arsitektur untuk versi starter
+## Laporan dan ekspor
 
-- React + Vite + TypeScript untuk memudahkan impor Build; pernyataan ini adalah adapter starter, bukan kunci arsitektur produksi akhir.
-- Engine perhitungan murni di `src/engine/`, kontrak Zod di `src/domain/`.
-- `src/ai-feature.ts` hanya mengelola preferensi UI OFF/ON. Jangan memasukkan panggilan model di sana.
-- `localStorage` hanya boleh menyimpan preferensi AI OFF/ON, tidak untuk data keuangan.
-- SQL di `supabase/migrations/` adalah draft yang belum boleh diterapkan pada data nyata.
-- Tombol simpan sengaja nonaktif dan halaman menandai bahwa ini masih starter.
+Baca `docs/specs/18_REPORTING_EXPORT_SPEC.md`, dan tandai PDF/XLSX/CSV/JSON sebagai belum aktif kecuali benar-benar sudah dibuat serta diuji. Print to PDF melalui browser tidak sama dengan ekspor PDF laporan tersimpan.
 
-## Urutan pengembangan
-
-1. Pastikan starter bisa dijalankan/build dan semua tes lulus.
-2. Lengkapi engine dari golden cases dan properti integritas data.
-3. Finalisasi konflik keputusan yang pending pada Decision Register.
-4. Baru implementasikan server/database, migrasi, transaksi atomik/idempotent, RLS/role, snapshot dan koreksi.
-5. Uji keamanan, kegagalan koneksi, dan backup/restore.
-6. Aktifkan simpan transaksi setelah semua gerbang lulus.
-7. Fitur AI/OCR tetap ditunda sampai ada instruksi eksplisit baru.
-
-Untuk setiap perubahan, laporkan file yang berubah, alasan, tes yang benar-benar dijalankan, hasil, bagian yang belum selesai, dan risiko data.
+Setiap akhir tugas, laporkan file yang berubah, tes yang benar-benar dijalankan, hasil, pekerjaan yang belum selesai, dan risiko yang tersisa.

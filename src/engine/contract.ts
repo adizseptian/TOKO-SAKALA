@@ -21,12 +21,7 @@ export interface ProductCalculation {
   unknownLossKnown: number;
   certainty: "PASTI" | "PERLU_DIPERIKSA" | "BELUM_DIKETAHUI";
   notes: string[];
-  potentialSalesRevenue: AmountRange;
-  remainingAtSellingPrice: AmountRange;
-  grossProfit: AmountRange;
 }
-
-export type RemittanceStatus = "COCOK" | "PERLU_DIPERIKSA" | "BELUM_COCOK" | "MENUNGGU_SETORAN";
 
 export interface DepositCheck {
   eventId: string;
@@ -34,13 +29,6 @@ export interface DepositCheck {
   expectedBeforeDeposit: AmountRange;
   difference: AmountRange;
   certainty: "PASTI" | "PERLU_DIPERIKSA" | "BELUM_DIKETAHUI";
-  status: RemittanceStatus;
-  statusLabel: string;
-  explanation: string;
-  employeeName?: string;
-  notes?: string;
-  periodId?: string;
-  occurredAt?: string;
 }
 
 export interface EngineOutput {
@@ -56,19 +44,8 @@ export interface EngineOutput {
     unknownLossKnown: number;
     profit: AmountRange | null;
     certainty: "PASTI" | "PERLU_DIPERIKSA" | "BELUM_DIKETAHUI";
-    storeCashAfterDeposits: AmountRange; // Saldo uang usaha yang masih dipegang karyawan
-    totalDeposits: number; // Setoran aktual kumulatif yang diterima owner
-    expectedEmployeeRemittance: AmountRange; // Uang yang semestinya diserahkan karyawan
-    potentialSalesRevenue: AmountRange; // Keuntungan Jual — nilai jual jika semua terjual
-    remainingInventoryAtSellingPrice: AmountRange; // Nilai sisa pada harga jual
-    grossProfit: AmountRange;
-    netProfit: AmountRange | null;
-    remittanceStatus: {
-      status: RemittanceStatus;
-      statusLabel: string;
-      explanation: string;
-      difference: AmountRange;
-    };
+    storeCashAfterDeposits: AmountRange;
+    totalDeposits: number;
   };
   depositChecks: DepositCheck[];
   issues: { code: string; message: string; productId?: string; eventId?: string }[];
