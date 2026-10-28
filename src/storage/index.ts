@@ -3,3 +3,4 @@ export * from './checksum';
 export * from './storageAdapter';
 export * from './mockStorageAdapter';
 export * from './googleDriveAdapter';
+export * from './googleAuth';

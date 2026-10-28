@@ -1,14 +1,19 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Bell, ChevronRight, Calendar, AlertCircle, ShoppingCart,
   Package, Wallet, FileText, ArrowLeft, Search, SlidersHorizontal, Plus,
   Minus, Check, ArrowRight, CornerDownLeft, Sparkles, RefreshCw, Moon, Sun,
-  Cloud, Database, ShieldCheck, History, HardDrive
+  Cloud, Database, ShieldCheck, History, HardDrive, KeyRound, ExternalLink,
+  CheckCircle2, XCircle
 } from 'lucide-react';
 import { calculatePurchasePreview } from '@/engine/v1/purchase-preview';
 import { calculateStockCheckPreview } from '@/engine/v1/stock-check-preview';
-import { MockStorageAdapter } from '@/storage/mockStorageAdapter';
-import type { BackupMetadata } from '@/storage/types';
+import {
+  googleAuth,
+  GoogleDriveAdapter,
+  type AuthState,
+  type BackupMetadata,
+} from '@/storage';
 
 type PrimaryTab = 'beranda' | 'catat' | 'stok' | 'setoran' | 'lainnya';
 type Screen = PrimaryTab | 'biaya' | 'laporan' | 'riwayat' | 'barang' | 'asisten' | 'pengaturan';
@@ -63,37 +68,118 @@ export default function App() {
   const [depositNote, setDepositNote] = useState<string>('');
   const [depositDate, setDepositDate] = useState<string>('Rabu, 28 Okt 2025');
 
-  // Google Drive Backend & Storage State
-  const [storageAdapter] = useState(() => new MockStorageAdapter());
-  const [isDriveConnected, setIsDriveConnected] = useState<boolean>(true);
-  const [driveEmail] = useState<string>('adizseptian@gmail.com');
+  // Google Drive Real Backend & Storage State
+  const [driveAdapter] = useState(() => new GoogleDriveAdapter({
+    getAccessToken: () => googleAuth.getValidAccessToken(),
+    userEmail: 'adizseptian@gmail.com',
+  }));
+
+  const [authState, setAuthState] = useState<AuthState>(googleAuth.getAuthState());
+  const [authError, setAuthError] = useState<string | null>(googleAuth.getErrorMessage());
+  const [userInfo, setUserInfo] = useState(googleAuth.getUserInfo());
   const [dataVersion, setDataVersion] = useState<number>(1);
   const [checksumStatus, setChecksumStatus] = useState<'VALID' | 'CORRUPT' | 'UNCHECKED'>('VALID');
-  const [lastBackupTime, setLastBackupTime] = useState<string>('28 Okt 2026, 17:56 WIB');
-  const [backups, setBackups] = useState<BackupMetadata[]>([
-    {
-      id: 'backup-init-1',
-      fileName: 'backup-2026-10-28-175642.json',
-      createdAt: '2026-10-28T10:56:42Z',
-      dataVersion: 1,
-      schemaVersion: 1,
-      checksum: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-      byteSize: 1420,
-      label: 'Cadangan Awal Toko Sakala',
-    },
-  ]);
+  const [lastBackupTime, setLastBackupTime] = useState<string>('Belum ada cadangan');
+  const [backups, setBackups] = useState<BackupMetadata[]>([]);
   const [isBackingUp, setIsBackingUp] = useState<boolean>(false);
+  const [isCheckingConnection, setIsCheckingConnection] = useState<boolean>(false);
   const [showRestoreModal, setShowRestoreModal] = useState<boolean>(false);
+  const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
+  const [clientIdInput, setClientIdInput] = useState<string>(googleAuth.getClientId() || '');
+  const [storageQuota, setStorageQuota] = useState<{ usageBytes: number; limitBytes?: number } | null>(null);
+
+  // Subscribe ke status otentikasi Google Identity Services
+  useEffect(() => {
+    const unsubscribe = googleAuth.subscribe((state, err) => {
+      setAuthState(state);
+      setAuthError(err || null);
+      const user = googleAuth.getUserInfo();
+      if (user) {
+        setUserInfo(user);
+      }
+    });
+
+    // Jika sudah terhubung, sinkronkan daftar cadangan dan status kuota
+    if (googleAuth.getAuthState() === 'CONNECTED') {
+      driveAdapter.testConnection().then(conn => {
+        if (conn.ok && conn.storageQuota) {
+          setStorageQuota(conn.storageQuota);
+        }
+      }).catch(() => {});
+
+      driveAdapter.listBackups().then(b => {
+        if (b.length > 0) {
+          setBackups(b);
+          setLastBackupTime(new Date(b[0].createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB');
+        }
+      }).catch(() => {});
+    }
+
+    return () => unsubscribe();
+  }, [driveAdapter]);
+
+  const handleConnectGoogle = async () => {
+    if (authState === 'UNCONFIGURED') {
+      setShowConfigModal(true);
+      return;
+    }
+    try {
+      showToast('Membuka jendela otorisasi Google...');
+      await googleAuth.requestAccessToken(false);
+      showToast('Otorisasi Google Drive berhasil!');
+      
+      const conn = await driveAdapter.testConnection();
+      if (conn.ok && conn.storageQuota) {
+        setStorageQuota(conn.storageQuota);
+      }
+      const driveBackups = await driveAdapter.listBackups();
+      if (driveBackups.length > 0) {
+        setBackups(driveBackups);
+        setLastBackupTime(new Date(driveBackups[0].createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB');
+      }
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Otorisasi Google gagal.');
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    await googleAuth.disconnect();
+    await driveAdapter.disconnect();
+    setStorageQuota(null);
+    showToast('Sesi Google Drive telah diputuskan.');
+  };
+
+  const handleTestConnection = async () => {
+    setIsCheckingConnection(true);
+    try {
+      const conn = await driveAdapter.testConnection();
+      if (conn.ok) {
+        const usageMb = conn.storageQuota ? (conn.storageQuota.usageBytes / (1024 * 1024)).toFixed(2) : '0';
+        setStorageQuota(conn.storageQuota ?? null);
+        showToast(`Koneksi aktif! (${conn.email} • Terpakai: ${usageMb} MB)`);
+      } else {
+        showToast(`Koneksi gagal: ${conn.error}`);
+      }
+    } catch (err) {
+      showToast(`Kesalahan: ${err instanceof Error ? err.message : 'Koneksi gagal'}`);
+    } finally {
+      setIsCheckingConnection(false);
+    }
+  };
 
   const handleManualBackup = async () => {
+    if (authState !== 'CONNECTED') {
+      showToast('Hubungkan akun Google Drive terlebih dahulu.');
+      return;
+    }
     setIsBackingUp(true);
     try {
-      const meta = await storageAdapter.createBackup('Cadangan Manual Pengguna');
+      const meta = await driveAdapter.createBackup('Cadangan Manual Pengguna');
       setBackups(prev => [meta, ...prev]);
       setLastBackupTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB');
       showToast(`Cadangan Google Drive tersimpan: ${meta.fileName}`);
-    } catch {
-      showToast('Gagal membuat cadangan ke Google Drive.');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Gagal membuat cadangan ke Google Drive.');
     } finally {
       setIsBackingUp(false);
     }
@@ -101,23 +187,41 @@ export default function App() {
 
   const handleRestoreBackup = async (backupId: string) => {
     try {
-      const res = await storageAdapter.restoreBackup(backupId);
+      const res = await driveAdapter.restoreBackup(backupId);
       if (res.success) {
         setDataVersion(res.restoredVersion);
         setChecksumStatus('VALID');
         setShowRestoreModal(false);
-        showToast(`Data dipulihkan ke versi ${res.restoredVersion}. Snapshot pengaman tersimpan.`);
+        showToast(`Data dipulihkan ke versi ${res.restoredVersion}. Snapshot keselamatan tersimpan.`);
       } else {
         showToast(`Pemulihan gagal: ${res.error}`);
       }
-    } catch {
-      showToast('Gagal memulihkan cadangan.');
+    } catch (err) {
+      showToast(`Gagal: ${err instanceof Error ? err.message : 'Kesalahan pemulihan'}`);
     }
+  };
+
+  const handleSaveClientId = () => {
+    const val = clientIdInput.trim();
+    if (!val) {
+      showToast('Client ID tidak boleh kosong.');
+      return;
+    }
+    googleAuth.setClientId(val);
+    setShowConfigModal(false);
+    showToast('OAuth Client ID tersimpan di sesi peramban.');
+  };
+
+  const handleResetClientId = () => {
+    googleAuth.clearRuntimeClientId();
+    setClientIdInput('');
+    setShowConfigModal(false);
+    showToast('Client ID di-reset ke nilai bawaan.');
   };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const toggleTheme = () => {
@@ -217,7 +321,13 @@ export default function App() {
         <div className="rail-footer">
           <strong>Backend Google Drive (Rp0)</strong>
           <p style={{ marginTop: '2px', fontSize: '11px' }}>
-            {isDriveConnected ? `Tersambung: ${driveEmail}` : 'Mode Offline / Pratinjau'}
+            {authState === 'CONNECTED'
+              ? `Tersambung: ${userInfo?.email || 'adizseptian@gmail.com'}`
+              : authState === 'UNCONFIGURED'
+              ? 'OAuth Client ID Belum Diatur'
+              : authState === 'CONNECTING'
+              ? 'Sedang Meminta Otorisasi...'
+              : 'Belum Terhubung'}
           </p>
           <span style={{ fontSize: '10px', color: 'var(--muted)', display: 'block', marginTop: '4px' }}>
             Versi Data: v{dataVersion} • SHA-256 {checksumStatus}
@@ -1004,22 +1114,100 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {/* Google Drive Backend Storage Card */}
             <div className="form-card">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                <Cloud size={20} color="var(--orange)" />
-                <h3 className="form-card-title" style={{ margin: 0 }}>Penyimpanan Google Drive (Rp0)</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Cloud size={20} color="var(--orange)" />
+                  <h3 className="form-card-title" style={{ margin: 0 }}>Penyimpanan Google Drive (Rp0)</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowConfigModal(true)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--muted)',
+                    fontSize: '11px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    cursor: 'pointer',
+                    padding: '4px 6px',
+                  }}
+                  title="Konfigurasi Client ID & Origins"
+                  aria-label="Konfigurasi Client ID"
+                >
+                  <KeyRound size={14} />
+                  <span>Atur Client ID</span>
+                </button>
               </div>
 
-              <div className="summary-box-row" style={{ marginTop: '8px' }}>
+              {/* Status Alert jika ada error / unconfigured */}
+              {authState === 'UNCONFIGURED' && (
+                <div style={{ padding: '10px 12px', background: 'var(--amber-pale)', border: '1px solid #e2bc74', borderRadius: '8px', fontSize: '11px', color: 'var(--ink)', marginBottom: '12px' }}>
+                  <strong>Client ID Diperlukan:</strong>
+                  <p style={{ marginTop: '2px', color: 'var(--muted)' }}>
+                    Masukkan Google OAuth 2.0 Web Client ID Anda untuk mengotorisasi akses Google Drive akun <strong>adizseptian@gmail.com</strong> tanpa backend berbayar (Rp0).
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-paper"
+                    onClick={() => setShowConfigModal(true)}
+                    style={{ minHeight: '36px', marginTop: '8px', fontSize: '11px', width: '100%' }}
+                  >
+                    Buka Panduan & Pengaturan Client ID →
+                  </button>
+                </div>
+              )}
+
+              {authState === 'ERROR' && authError && (
+                <div style={{ padding: '10px 12px', background: '#ffebe6', border: '1px solid #ff8f73', borderRadius: '8px', fontSize: '11px', color: '#900', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <XCircle size={15} />
+                    <strong>Gagal Otorisasi:</strong>
+                  </div>
+                  <p style={{ marginTop: '4px' }}>{authError}</p>
+                </div>
+              )}
+
+              {authState === 'EXPIRED' && (
+                <div style={{ padding: '10px 12px', background: 'var(--amber-pale)', border: '1px solid #e2bc74', borderRadius: '8px', fontSize: '11px', color: 'var(--ink)', marginBottom: '12px' }}>
+                  <strong>Sesi Otorisasi Kedaluwarsa:</strong>
+                  <p style={{ marginTop: '2px' }}>Token keamanan telah habis masa berlakunya. Silakan hubungkan ulang akun Google Anda.</p>
+                </div>
+              )}
+
+              <div className="summary-box-row" style={{ marginTop: '4px' }}>
                 <span>Akun Google Pemilik</span>
-                <strong>{driveEmail}</strong>
+                <strong>{userInfo?.email || 'adizseptian@gmail.com'}</strong>
               </div>
+
               <div className="summary-box-row">
                 <span>Status Sambungan</span>
-                <span style={{ fontWeight: 800, color: isDriveConnected ? 'var(--green)' : 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isDriveConnected ? 'var(--green)' : 'var(--red)' }} />
-                  {isDriveConnected ? 'Terhubung (API v3)' : 'Terputus'}
+                <span style={{
+                  fontWeight: 800,
+                  color: authState === 'CONNECTED' ? 'var(--green)' : (authState === 'UNCONFIGURED' || authState === 'EXPIRED') ? '#b8860b' : 'var(--red)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px'
+                }}>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: authState === 'CONNECTED' ? 'var(--green)' : (authState === 'UNCONFIGURED' || authState === 'EXPIRED') ? '#b8860b' : 'var(--red)'
+                  }} />
+                  {authState === 'CONNECTED'
+                    ? 'Terhubung (API v3)'
+                    : authState === 'UNCONFIGURED'
+                    ? 'Perlu Client ID'
+                    : authState === 'CONNECTING'
+                    ? 'Membuka Pop-up...'
+                    : authState === 'EXPIRED'
+                    ? 'Sesi Kedaluwarsa'
+                    : 'Belum Terhubung'}
                 </span>
               </div>
+
               <div className="summary-box-row">
                 <span>Keutuhan Data</span>
                 <span style={{ fontWeight: 800, color: checksumStatus === 'VALID' ? 'var(--green)' : 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
@@ -1027,50 +1215,108 @@ export default function App() {
                   {checksumStatus === 'VALID' ? 'SHA-256 Valid' : 'Peringatan Korup'}
                 </span>
               </div>
+
               <div className="summary-box-row">
                 <span>Versi Dokumen</span>
                 <strong>v{dataVersion}</strong>
               </div>
+
               <div className="summary-box-row">
                 <span>Cadangan Terakhir</span>
                 <strong style={{ fontSize: '12px' }}>{lastBackupTime}</strong>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleManualBackup}
-                  disabled={!isDriveConnected || isBackingUp}
-                  style={{ minHeight: '44px', width: '100%' }}
-                >
-                  <HardDrive size={16} />
-                  <span>{isBackingUp ? 'Membuat Cadangan...' : 'Cadangkan Manual ke Google Drive'}</span>
-                </button>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                  <button
-                    type="button"
-                    className="btn btn-paper"
-                    onClick={() => setShowRestoreModal(true)}
-                    style={{ minHeight: '44px' }}
-                  >
-                    <History size={16} />
-                    <span>Pulihkan ({backups.length})</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-paper"
-                    onClick={() => {
-                      setIsDriveConnected(prev => !prev);
-                      showToast(isDriveConnected ? 'Koneksi Google Drive diputuskan.' : 'Terhubung ke Google Drive adizseptian@gmail.com.');
-                    }}
-                    style={{ minHeight: '44px' }}
-                  >
-                    <RefreshCw size={16} />
-                    <span>{isDriveConnected ? 'Putuskan' : 'Hubungkan'}</span>
-                  </button>
+              {storageQuota && (
+                <div className="summary-box-row">
+                  <span>Ruang Drive Terpakai</span>
+                  <strong style={{ fontSize: '11px' }}>
+                    {(storageQuota.usageBytes / (1024 * 1024)).toFixed(1)} MB
+                    {storageQuota.limitBytes ? ` / ${(storageQuota.limitBytes / (1024 * 1024 * 1024)).toFixed(0)} GB` : ''}
+                  </strong>
                 </div>
+              )}
+
+              {/* Action Buttons Section */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
+                {authState === 'CONNECTED' ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleManualBackup}
+                      disabled={isBackingUp}
+                      style={{ minHeight: '44px', width: '100%' }}
+                    >
+                      <HardDrive size={16} />
+                      <span>{isBackingUp ? 'Membuat Cadangan...' : 'Cadangkan Manual ke Google Drive'}</span>
+                    </button>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={() => setShowRestoreModal(true)}
+                        style={{ minHeight: '44px' }}
+                      >
+                        <History size={16} />
+                        <span>Pulihkan ({backups.length})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={handleTestConnection}
+                        disabled={isCheckingConnection}
+                        style={{ minHeight: '44px' }}
+                      >
+                        <RefreshCw size={16} className={isCheckingConnection ? 'spin' : ''} />
+                        <span>{isCheckingConnection ? 'Menguji...' : 'Tes Sambungan'}</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-paper"
+                      onClick={handleDisconnectGoogle}
+                      style={{ minHeight: '40px', fontSize: '12px', color: 'var(--red)', borderColor: '#ffd0c4' }}
+                    >
+                      Putuskan Sesi Google Drive
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleConnectGoogle}
+                      disabled={authState === 'CONNECTING'}
+                      style={{ minHeight: '44px', width: '100%' }}
+                    >
+                      <Cloud size={16} />
+                      <span>
+                        {authState === 'CONNECTING'
+                          ? 'Membuka Jendela Otorisasi...'
+                          : authState === 'UNCONFIGURED'
+                          ? 'Konfigurasi Google Client ID'
+                          : authState === 'EXPIRED'
+                          ? 'Otorisasi Ulang Akun Google'
+                          : 'Hubungkan Akun Google (Login)'}
+                      </span>
+                    </button>
+
+                    {authState !== 'UNCONFIGURED' && (
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={() => setShowConfigModal(true)}
+                        style={{ minHeight: '40px', fontSize: '12px' }}
+                      >
+                        <KeyRound size={14} />
+                        <span>Ubah OAuth Client ID</span>
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             </div>
 
@@ -1165,6 +1411,114 @@ export default function App() {
                   >
                     Tutup
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Dialog Konfigurasi OAuth Client ID & Origins */}
+            {showConfigModal && (
+              <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="oauth-config-title" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+                <div className="form-card" style={{ maxWidth: '440px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <KeyRound size={20} color="var(--orange)" />
+                      <h3 id="oauth-config-title" className="form-card-title" style={{ margin: 0 }}>Konfigurasi Google OAuth 2.0</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowConfigModal(false)}
+                      style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                      aria-label="Tutup dialog konfigurasi"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '14px', lineHeight: '1.4' }}>
+                    Aplikasi ini menggunakan Google Identity Services (GIS) sisi peramban untuk mengakses Google Drive tanpa server perantara berbayar (Anggaran <strong>Rp0</strong>).
+                  </p>
+
+                  {/* Authorized JavaScript Origin Card */}
+                  <div style={{ padding: '10px 12px', background: 'var(--paper)', border: '1.5px solid var(--line)', borderRadius: '8px', marginBottom: '14px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--ink)', display: 'block' }}>
+                      1. Authorized JavaScript Origin Anda:
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' }}>
+                      <code style={{ fontSize: '11px', background: 'var(--cream)', padding: '6px 8px', borderRadius: '4px', flex: 1, overflowX: 'auto', border: '1px solid var(--line)' }}>
+                        {typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}
+                      </code>
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={() => {
+                          if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                            navigator.clipboard.writeText(window.location.origin);
+                            showToast('Origin disalin ke clipboard!');
+                          }
+                        }}
+                        style={{ minHeight: '36px', padding: '0 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                      >
+                        Salin
+                      </button>
+                    </div>
+                    <span style={{ fontSize: '10px', color: 'var(--muted)', display: 'block', marginTop: '4px' }}>
+                      Tempelkan URL ini di Google Cloud Console pada kolom <em>Authorized JavaScript origins</em>.
+                    </span>
+                  </div>
+
+                  {/* Input Client ID */}
+                  <div style={{ marginBottom: '14px' }}>
+                    <label htmlFor="cfg-client-id" style={{ display: 'block', fontSize: '11px', fontWeight: 800, marginBottom: '4px' }}>
+                      2. OAuth 2.0 Web Client ID:
+                    </label>
+                    <input
+                      id="cfg-client-id"
+                      type="text"
+                      className="field-input"
+                      placeholder="Contoh: 123456789-xxx.apps.googleusercontent.com"
+                      value={clientIdInput}
+                      onChange={(e) => setClientIdInput(e.target.value)}
+                      style={{ fontSize: '12px', width: '100%', boxSizing: 'border-box' }}
+                    />
+                    <span style={{ fontSize: '10px', color: 'var(--muted)', display: 'block', marginTop: '4px' }}>
+                      Client ID bersifat publik dan aman disimpan di frontend. Jangan pernah membagikan atau memasukkan Client Secret.
+                    </span>
+                  </div>
+
+                  {/* Info Scope */}
+                  <div style={{ padding: '8px 10px', background: 'var(--blue-pale)', border: '1px solid var(--blue)', borderRadius: '6px', fontSize: '10px', color: 'var(--ink)', marginBottom: '16px' }}>
+                    <strong>Scope Minimum:</strong> <code>https://www.googleapis.com/auth/drive.file</code> (Aplikasi hanya membaca dan menulis file data miliknya sendiri).
+                  </div>
+
+                  {/* Modal Action Buttons */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleSaveClientId}
+                      style={{ minHeight: '44px', width: '100%' }}
+                    >
+                      Simpan Client ID
+                    </button>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={handleResetClientId}
+                        style={{ minHeight: '40px', fontSize: '11px' }}
+                      >
+                        Hapus / Reset
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={() => setShowConfigModal(false)}
+                        style={{ minHeight: '40px', fontSize: '11px' }}
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

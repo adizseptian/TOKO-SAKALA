@@ -8,16 +8,40 @@ import {
   TokoSakalaDocumentSchema,
 } from './types';
 import { type StorageAdapter, createDefaultPayload } from './storageAdapter';
-import { computeSha256, verifyChecksum, canonicalizeJson } from './checksum';
+import { computeSha256, verifyChecksum } from './checksum';
 
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3/files';
 const DATA_FILE_NAME = 'toko-sakala-data.json';
 const BACKUP_FOLDER_NAME = 'TOKO_SAKALA_BACKUPS';
 
+export class GoogleDriveAuthError extends Error {
+  constructor(message: string, public readonly code: 'TOKEN_EXPIRED' | 'PERMISSION_DENIED' | 'UNAUTHORIZED') {
+    super(message);
+    this.name = 'GoogleDriveAuthError';
+  }
+}
+
+export class GoogleDriveNetworkError extends Error {
+  constructor(message: string, public readonly status?: number) {
+    super(message);
+    this.name = 'GoogleDriveNetworkError';
+  }
+}
+
 export interface GoogleDriveConfig {
   getAccessToken: () => Promise<string | null>;
   userEmail?: string;
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  email?: string;
+  storageQuota?: {
+    usageBytes: number;
+    limitBytes?: number;
+  };
+  error?: string;
 }
 
 export class GoogleDriveAdapter implements StorageAdapter {
@@ -39,8 +63,9 @@ export class GoogleDriveAdapter implements StorageAdapter {
   private async getAuthHeaders(): Promise<Record<string, string>> {
     const token = await this.getAccessToken();
     if (!token) {
-      throw new Error(
-        'Akses Google Drive belum diotorisasi. Silakan hubungkan akun Google Anda.'
+      throw new GoogleDriveAuthError(
+        'Akses Google Drive belum diotorisasi. Silakan hubungkan akun Google Anda melalui tombol login.',
+        'UNAUTHORIZED'
       );
     }
     return {
@@ -49,21 +74,79 @@ export class GoogleDriveAdapter implements StorageAdapter {
     };
   }
 
-  async connect(): Promise<boolean> {
+  /**
+   * Menangani respons error dari Google API dengan pesan yang jelas
+   */
+  private async handleApiError(res: Response, contextAction: string): Promise<never> {
+    let errorDetail = '';
+    try {
+      const errJson = await res.json();
+      errorDetail = errJson.error?.message || JSON.stringify(errJson);
+    } catch {
+      errorDetail = await res.text().catch(() => res.statusText);
+    }
+
+    if (res.status === 401) {
+      throw new GoogleDriveAuthError(
+        `Sesi otorisasi Google Drive telah kedaluwarsa (${contextAction}). Silakan otorisasi ulang akun Google Anda.`,
+        'TOKEN_EXPIRED'
+      );
+    }
+
+    if (res.status === 403) {
+      throw new GoogleDriveAuthError(
+        `Izin akses Google Drive ditolak atau kuota habis (${contextAction}): ${errorDetail}`,
+        'PERMISSION_DENIED'
+      );
+    }
+
+    throw new GoogleDriveNetworkError(
+      `Gagal ${contextAction}: [HTTP ${res.status}] ${errorDetail}`,
+      res.status
+    );
+  }
+
+  /**
+   * Menguji koneksi langsung ke Google Drive API
+   */
+  async testConnection(): Promise<ConnectionTestResult> {
     try {
       const headers = await this.getAuthHeaders();
-      const res = await fetch(`${DRIVE_API_BASE}/about?fields=user`, { headers });
+      const res = await fetch(`${DRIVE_API_BASE}/about?fields=user,storageQuota`, { headers });
       if (!res.ok) {
-        return false;
+        if (res.status === 401) {
+          return { ok: false, error: 'Token akses tidak valid atau telah kedaluwarsa. Silakan otorisasi ulang.' };
+        }
+        if (res.status === 403) {
+          return { ok: false, error: 'Izin akses ke Google Drive API ditolak (scope drive.file diperlukan).' };
+        }
+        return { ok: false, error: `Gagal terhubung ke Google Drive: HTTP ${res.status}` };
       }
+
       const data = await res.json();
       if (data.user?.emailAddress) {
         this.userEmail = data.user.emailAddress;
       }
-      return true;
-    } catch {
-      return false;
+
+      return {
+        ok: true,
+        email: data.user?.emailAddress ?? this.userEmail,
+        storageQuota: data.storageQuota ? {
+          usageBytes: Number(data.storageQuota.usage ?? 0),
+          limitBytes: data.storageQuota.limit ? Number(data.storageQuota.limit) : undefined,
+        } : undefined,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Koneksi ke Google Drive gagal.',
+      };
     }
+  }
+
+  async connect(): Promise<boolean> {
+    const test = await this.testConnection();
+    return test.ok;
   }
 
   async disconnect(): Promise<void> {
@@ -83,7 +166,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
         dataVersion: this.lastKnownVersion,
         isDirty: false,
         checksumStatus: this.checksumStatus,
-        errorMessage: 'Belum terhubung ke Google Drive.',
+        errorMessage: 'Belum terhubung ke akun Google Drive.',
       };
     }
 
@@ -99,7 +182,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
   }
 
   /**
-   * Mencari atau membuat file data utama di Google Drive
+   * Mencari atau membuat file data utama toko di Google Drive
    */
   private async findOrCreateDataFile(): Promise<string> {
     if (this.mainFileId) {
@@ -107,14 +190,12 @@ export class GoogleDriveAdapter implements StorageAdapter {
     }
 
     const headers = await this.getAuthHeaders();
-    // Query files yang tidak berada di trash dan memiliki nama DATA_FILE_NAME
     const q = encodeURIComponent(`name = '${DATA_FILE_NAME}' and trashed = false`);
     const listUrl = `${DRIVE_API_BASE}/files?q=${q}&fields=files(id,name,modifiedTime)`;
     
     const res = await fetch(listUrl, { headers });
     if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Gagal mencari file toko di Google Drive: ${res.status} ${err}`);
+      await this.handleApiError(res, 'mencari file data toko');
     }
 
     const data = await res.json();
@@ -123,7 +204,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
       return this.mainFileId!;
     }
 
-    // Buat file baru dengan initial payload
+    // Buat file baru jika belum ada di Drive pengguna
     const initialPayload = createDefaultPayload();
     const now = new Date().toISOString();
     const checksum = await computeSha256(initialPayload);
@@ -147,7 +228,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
   }
 
   /**
-   * Mencari atau membuat folder BACKUPS di Google Drive
+   * Mencari atau membuat folder TOKO_SAKALA_BACKUPS di Google Drive
    */
   private async findOrCreateBackupFolder(): Promise<string> {
     if (this.backupFolderId) {
@@ -165,6 +246,8 @@ export class GoogleDriveAdapter implements StorageAdapter {
         this.backupFolderId = data.files[0].id;
         return this.backupFolderId!;
       }
+    } else {
+      await this.handleApiError(res, 'mencari folder cadangan');
     }
 
     // Buat folder baru
@@ -184,7 +267,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
     });
 
     if (!createRes.ok) {
-      throw new Error('Gagal membuat folder cadangan di Google Drive.');
+      await this.handleApiError(createRes, 'membuat folder cadangan baru');
     }
 
     const created = await createRes.json();
@@ -193,7 +276,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
   }
 
   /**
-   * Helper multipart upload untuk membuat file baru
+   * Helper multipart upload untuk membuat file baru di Google Drive
    */
   private async uploadNewFile(
     fileName: string,
@@ -234,8 +317,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
     });
 
     if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Gagal mengunggah file baru ke Google Drive: ${res.status} ${err}`);
+      await this.handleApiError(res, `mengunggah file "${fileName}"`);
     }
 
     const json = await res.json();
@@ -249,7 +331,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
     const res = await fetch(`${DRIVE_API_BASE}/files/${fileId}?alt=media`, { headers });
     if (!res.ok) {
       this.checksumStatus = 'CORRUPT';
-      throw new Error(`Gagal mengunduh data toko dari Google Drive: status ${res.status}`);
+      await this.handleApiError(res, 'mengunduh data toko');
     }
 
     let parsed: unknown;
@@ -257,14 +339,14 @@ export class GoogleDriveAdapter implements StorageAdapter {
       parsed = await res.json();
     } catch {
       this.checksumStatus = 'CORRUPT';
-      throw new Error('File data toko di Google Drive bukan JSON yang valid.');
+      throw new Error('File data toko di Google Drive bukan format JSON yang valid.');
     }
 
     // 1. Validasi struktur skema
     const validated = TokoSakalaDocumentSchema.safeParse(parsed);
     if (!validated.success) {
       this.checksumStatus = 'CORRUPT';
-      throw new Error(`Format data tidak valid: ${validated.error.message}`);
+      throw new Error(`Format data toko di Google Drive tidak valid: ${validated.error.message}`);
     }
 
     const doc = validated.data;
@@ -274,7 +356,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
     if (!isChecksumValid) {
       this.checksumStatus = 'CORRUPT';
       throw new Error(
-        'Integritas data gagal: Checksum SHA-256 tidak cocok dengan konten payload. File mungkin telah dimodifikasi secara eksternal.'
+        'Integritas data gagal: Checksum SHA-256 tidak cocok dengan konten data. File mungkin telah dimodifikasi secara eksternal.'
       );
     }
 
@@ -290,13 +372,14 @@ export class GoogleDriveAdapter implements StorageAdapter {
       const fileId = await this.findOrCreateDataFile();
       const headers = await this.getAuthHeaders();
 
+      // Deteksi konflik konkurensi (optimistic locking)
       if (baseVersion !== undefined && this.lastKnownVersion !== 0 && baseVersion !== this.lastKnownVersion) {
         return {
           success: false,
           dataVersion: this.lastKnownVersion,
           updatedAt: this.lastSyncedAt ?? new Date().toISOString(),
           checksum: '',
-          error: `Konflik versi: versi lokal (${baseVersion}) tidak sesuai dengan versi Drive (${this.lastKnownVersion}).`,
+          error: `Konflik versi: Versi lokal (${baseVersion}) tidak sesuai dengan versi di Google Drive (${this.lastKnownVersion}). Silakan muat ulang data terbaru.`,
         };
       }
 
@@ -328,14 +411,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
       });
 
       if (!res.ok) {
-        const err = await res.text();
-        return {
-          success: false,
-          dataVersion: this.lastKnownVersion,
-          updatedAt: this.lastSyncedAt ?? now,
-          checksum: '',
-          error: `Gagal memperbarui file di Google Drive: ${res.status} ${err}`,
-        };
+        await this.handleApiError(res, 'memperbarui file data di Google Drive');
       }
 
       this.lastKnownVersion = nextVersion;
@@ -375,7 +451,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
       dataVersion: String(currentDoc.dataVersion),
       schemaVersion: String(currentDoc.schemaVersion),
       checksum: currentDoc.checksum,
-      label: label ?? 'Manual Backup',
+      label: label ?? 'Cadangan Manual',
     });
 
     return {
@@ -391,32 +467,36 @@ export class GoogleDriveAdapter implements StorageAdapter {
   }
 
   async listBackups(): Promise<BackupMetadata[]> {
-    const folderId = await this.findOrCreateBackupFolder();
-    const headers = await this.getAuthHeaders();
+    try {
+      const folderId = await this.findOrCreateBackupFolder();
+      const headers = await this.getAuthHeaders();
 
-    const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
-    const fields = encodeURIComponent('files(id,name,size,createdTime,appProperties)');
-    const res = await fetch(`${DRIVE_API_BASE}/files?q=${q}&fields=${fields}&orderBy=createdTime desc`, {
-      headers,
-    });
+      const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+      const fields = encodeURIComponent('files(id,name,size,createdTime,appProperties)');
+      const res = await fetch(`${DRIVE_API_BASE}/files?q=${q}&fields=${fields}&orderBy=createdTime desc`, {
+        headers,
+      });
 
-    if (!res.ok) {
+      if (!res.ok) {
+        await this.handleApiError(res, 'mengambil daftar cadangan');
+      }
+
+      const data = await res.json();
+      if (!data.files) return [];
+
+      return data.files.map((f: { id: string; name: string; size?: string; createdTime: string; appProperties?: Record<string, string> }) => ({
+        id: f.id,
+        fileName: f.name,
+        createdAt: f.createdTime,
+        dataVersion: Number(f.appProperties?.dataVersion ?? 1),
+        schemaVersion: Number(f.appProperties?.schemaVersion ?? 1),
+        checksum: f.appProperties?.checksum ?? '',
+        byteSize: Number(f.size ?? 0),
+        label: f.appProperties?.label,
+      }));
+    } catch {
       return [];
     }
-
-    const data = await res.json();
-    if (!data.files) return [];
-
-    return data.files.map((f: { id: string; name: string; size?: string; createdTime: string; appProperties?: Record<string, string> }) => ({
-      id: f.id,
-      fileName: f.name,
-      createdAt: f.createdTime,
-      dataVersion: Number(f.appProperties?.dataVersion ?? 1),
-      schemaVersion: Number(f.appProperties?.schemaVersion ?? 1),
-      checksum: f.appProperties?.checksum ?? '',
-      byteSize: Number(f.size ?? 0),
-      label: f.appProperties?.label,
-    }));
   }
 
   async restoreBackup(backupId: string): Promise<RestoreResult> {
@@ -427,7 +507,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
     try {
       safetySnapshot = await this.createBackup('Snapshot otomatis sebelum pemulihan cadangan');
     } catch {
-      // Catat peringatan tapi jangan gagalkan jika backup kosong
+      // Catat peringatan tapi jangan gagalkan jika file data belum ada
     }
 
     // 2. Ambil isi file cadangan dari Google Drive
@@ -438,7 +518,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
         restoredVersion: this.lastKnownVersion,
         backupId,
         preRestoreSnapshotId: safetySnapshot?.id,
-        error: `Gagal membaca file cadangan: status ${res.status}`,
+        error: `Gagal membaca file cadangan dari Google Drive: status ${res.status}`,
       };
     }
 
