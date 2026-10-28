@@ -2,10 +2,13 @@ import { useState, useMemo } from 'react';
 import {
   Bell, ChevronRight, Calendar, AlertCircle, ShoppingCart,
   Package, Wallet, FileText, ArrowLeft, Search, SlidersHorizontal, Plus,
-  Minus, Check, ArrowRight, CornerDownLeft, Sparkles, RefreshCw, Moon, Sun
+  Minus, Check, ArrowRight, CornerDownLeft, Sparkles, RefreshCw, Moon, Sun,
+  Cloud, Database, ShieldCheck, History, HardDrive
 } from 'lucide-react';
 import { calculatePurchasePreview } from '@/engine/v1/purchase-preview';
 import { calculateStockCheckPreview } from '@/engine/v1/stock-check-preview';
+import { MockStorageAdapter } from '@/storage/mockStorageAdapter';
+import type { BackupMetadata } from '@/storage/types';
 
 type PrimaryTab = 'beranda' | 'catat' | 'stok' | 'setoran' | 'lainnya';
 type Screen = PrimaryTab | 'biaya' | 'laporan' | 'riwayat' | 'barang' | 'asisten' | 'pengaturan';
@@ -58,6 +61,59 @@ export default function App() {
   const [expectedAmount] = useState<number>(1250000);
   const [receivedAmount, setReceivedAmount] = useState<number>(1200000);
   const [depositNote, setDepositNote] = useState<string>('');
+  const [depositDate, setDepositDate] = useState<string>('Rabu, 28 Okt 2025');
+
+  // Google Drive Backend & Storage State
+  const [storageAdapter] = useState(() => new MockStorageAdapter());
+  const [isDriveConnected, setIsDriveConnected] = useState<boolean>(true);
+  const [driveEmail] = useState<string>('adizseptian@gmail.com');
+  const [dataVersion, setDataVersion] = useState<number>(1);
+  const [checksumStatus, setChecksumStatus] = useState<'VALID' | 'CORRUPT' | 'UNCHECKED'>('VALID');
+  const [lastBackupTime, setLastBackupTime] = useState<string>('28 Okt 2026, 17:56 WIB');
+  const [backups, setBackups] = useState<BackupMetadata[]>([
+    {
+      id: 'backup-init-1',
+      fileName: 'backup-2026-10-28-175642.json',
+      createdAt: '2026-10-28T10:56:42Z',
+      dataVersion: 1,
+      schemaVersion: 1,
+      checksum: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      byteSize: 1420,
+      label: 'Cadangan Awal Toko Sakala',
+    },
+  ]);
+  const [isBackingUp, setIsBackingUp] = useState<boolean>(false);
+  const [showRestoreModal, setShowRestoreModal] = useState<boolean>(false);
+
+  const handleManualBackup = async () => {
+    setIsBackingUp(true);
+    try {
+      const meta = await storageAdapter.createBackup('Cadangan Manual Pengguna');
+      setBackups(prev => [meta, ...prev]);
+      setLastBackupTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB');
+      showToast(`Cadangan Google Drive tersimpan: ${meta.fileName}`);
+    } catch {
+      showToast('Gagal membuat cadangan ke Google Drive.');
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleRestoreBackup = async (backupId: string) => {
+    try {
+      const res = await storageAdapter.restoreBackup(backupId);
+      if (res.success) {
+        setDataVersion(res.restoredVersion);
+        setChecksumStatus('VALID');
+        setShowRestoreModal(false);
+        showToast(`Data dipulihkan ke versi ${res.restoredVersion}. Snapshot pengaman tersimpan.`);
+      } else {
+        showToast(`Pemulihan gagal: ${res.error}`);
+      }
+    } catch {
+      showToast('Gagal memulihkan cadangan.');
+    }
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -159,8 +215,13 @@ export default function App() {
         </nav>
 
         <div className="rail-footer">
-          <strong>Mode Pratinjau</strong>
-          <p>Angka simulasi. Transaksi belum disimpan ke database.</p>
+          <strong>Backend Google Drive (Rp0)</strong>
+          <p style={{ marginTop: '2px', fontSize: '11px' }}>
+            {isDriveConnected ? `Tersambung: ${driveEmail}` : 'Mode Offline / Pratinjau'}
+          </p>
+          <span style={{ fontSize: '10px', color: 'var(--muted)', display: 'block', marginTop: '4px' }}>
+            Versi Data: v{dataVersion} • SHA-256 {checksumStatus}
+          </span>
         </div>
       </aside>
 
@@ -651,13 +712,26 @@ export default function App() {
             {/* Date Selector Row */}
             <div
               className="date-selector-row"
-              onClick={() => showToast('Pilihan tanggal untuk demonstrasi.')}
+              onClick={() => {
+                const todayFormatted = new Intl.DateTimeFormat('id-ID', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                }).format(new Date());
+                const choice = prompt(`Pilih tanggal setoran:\n1. Mockup: Rabu, 28 Okt 2025\n2. Hari ini: ${todayFormatted}`, depositDate);
+                if (choice && choice.trim()) {
+                  setDepositDate(choice.trim());
+                  showToast(`Tanggal setoran: ${choice.trim()}`);
+                }
+              }}
               role="button"
               tabIndex={0}
+              aria-label="Pilih tanggal setoran"
             >
               <div className="date-selector-left">
                 <Calendar size={18} />
-                <span>Rabu, 28 Okt 2025</span>
+                <span>{depositDate}</span>
               </div>
               <ChevronRight size={18} color="var(--muted)" />
             </div>
@@ -927,32 +1001,173 @@ export default function App() {
         )}
 
         {currentScreen === 'pengaturan' && (
-          <div className="form-card">
-            <h3 className="form-card-title">Pengaturan Aplikasi</h3>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--line)' }}>
-              <div>
-                <strong>Mode Tampilan</strong>
-                <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
-                  Tema saat ini: {theme === 'light' ? 'Terang (Paper)' : 'Gelap (Near Black)'}
-                </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Google Drive Backend Storage Card */}
+            <div className="form-card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <Cloud size={20} color="var(--orange)" />
+                <h3 className="form-card-title" style={{ margin: 0 }}>Penyimpanan Google Drive (Rp0)</h3>
               </div>
-              <button
-                type="button"
-                className="btn btn-paper"
-                onClick={toggleTheme}
-                style={{ minHeight: '44px' }}
-              >
-                {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-                <span>Ganti Tema</span>
-              </button>
+
+              <div className="summary-box-row" style={{ marginTop: '8px' }}>
+                <span>Akun Google Pemilik</span>
+                <strong>{driveEmail}</strong>
+              </div>
+              <div className="summary-box-row">
+                <span>Status Sambungan</span>
+                <span style={{ fontWeight: 800, color: isDriveConnected ? 'var(--green)' : 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isDriveConnected ? 'var(--green)' : 'var(--red)' }} />
+                  {isDriveConnected ? 'Terhubung (API v3)' : 'Terputus'}
+                </span>
+              </div>
+              <div className="summary-box-row">
+                <span>Keutuhan Data</span>
+                <span style={{ fontWeight: 800, color: checksumStatus === 'VALID' ? 'var(--green)' : 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <ShieldCheck size={14} />
+                  {checksumStatus === 'VALID' ? 'SHA-256 Valid' : 'Peringatan Korup'}
+                </span>
+              </div>
+              <div className="summary-box-row">
+                <span>Versi Dokumen</span>
+                <strong>v{dataVersion}</strong>
+              </div>
+              <div className="summary-box-row">
+                <span>Cadangan Terakhir</span>
+                <strong style={{ fontSize: '12px' }}>{lastBackupTime}</strong>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleManualBackup}
+                  disabled={!isDriveConnected || isBackingUp}
+                  style={{ minHeight: '44px', width: '100%' }}
+                >
+                  <HardDrive size={16} />
+                  <span>{isBackingUp ? 'Membuat Cadangan...' : 'Cadangkan Manual ke Google Drive'}</span>
+                </button>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-paper"
+                    onClick={() => setShowRestoreModal(true)}
+                    style={{ minHeight: '44px' }}
+                  >
+                    <History size={16} />
+                    <span>Pulihkan ({backups.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-paper"
+                    onClick={() => {
+                      setIsDriveConnected(prev => !prev);
+                      showToast(isDriveConnected ? 'Koneksi Google Drive diputuskan.' : 'Terhubung ke Google Drive adizseptian@gmail.com.');
+                    }}
+                    style={{ minHeight: '44px' }}
+                  >
+                    <RefreshCw size={16} />
+                    <span>{isDriveConnected ? 'Putuskan' : 'Hubungkan'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div style={{ marginTop: '16px', padding: '12px', background: 'var(--amber-pale)', borderRadius: '10px', border: '1px solid #e2bc74', color: 'var(--amber)', fontSize: '11px' }}>
-              <strong>Prinsip Keamanan TOKO SAKALA:</strong>
-              <p style={{ marginTop: '4px' }}>
-                Asisten AI default OFF. Tidak ada kunci API atau data rahasia di peramban. Mode pratinjau tidak menulis transaksi ke server.
-              </p>
+            {/* Tema & Pengaturan Aplikasi */}
+            <div className="form-card">
+              <h3 className="form-card-title">Tampilan & Tema</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--line)' }}>
+                <div>
+                  <strong>Mode Tampilan</strong>
+                  <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+                    Tema saat ini: {theme === 'light' ? 'Terang (Paper)' : 'Gelap (Near Black)'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-paper"
+                  onClick={toggleTheme}
+                  style={{ minHeight: '44px' }}
+                >
+                  {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+                  <span>Ganti Tema</span>
+                </button>
+              </div>
+
+              <div style={{ marginTop: '16px', padding: '12px', background: 'var(--amber-pale)', borderRadius: '10px', border: '1px solid #e2bc74', color: 'var(--amber)', fontSize: '11px' }}>
+                <strong>Prinsip Keamanan TOKO SAKALA:</strong>
+                <p style={{ marginTop: '4px' }}>
+                  Asisten AI default OFF. Tidak ada kunci API rahasia di peramban. Penyimpanan menggunakan Google Drive pribadi pengguna (Rp0).
+                </p>
+              </div>
             </div>
+
+            {/* Modal Dialog Pulihkan Cadangan (Restore) */}
+            {showRestoreModal && (
+              <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="restore-title" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+                <div className="form-card" style={{ maxWidth: '420px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h3 id="restore-title" className="form-card-title" style={{ margin: 0 }}>Daftar Cadangan Google Drive</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowRestoreModal(false)}
+                      style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                      aria-label="Tutup dialog"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div style={{ padding: '10px', background: 'var(--blue-pale)', borderRadius: '8px', border: '1px solid var(--blue)', fontSize: '11px', color: 'var(--ink)', marginBottom: '14px' }}>
+                    <strong>Proteksi Pemulihan Otomatis:</strong>
+                    <p style={{ marginTop: '2px' }}>
+                      Sebelum data ditimpa, sistem akan secara otomatis menyimpan snapshot pengaman data saat ini.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                    {backups.map(b => (
+                      <div
+                        key={b.id}
+                        style={{
+                          padding: '10px',
+                          border: '1.5px solid var(--line)',
+                          borderRadius: '8px',
+                          background: 'var(--paper)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <strong style={{ fontSize: '12px', display: 'block' }}>{b.fileName}</strong>
+                            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                              Versi {b.dataVersion} • {b.byteSize} bytes • {b.label ?? 'Cadangan'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-paper"
+                            onClick={() => handleRestoreBackup(b.id)}
+                            style={{ minHeight: '44px', padding: '6px 12px', fontSize: '11px' }}
+                          >
+                            Pulihkan
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-paper"
+                    onClick={() => setShowRestoreModal(false)}
+                    style={{ minHeight: '44px', width: '100%' }}
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

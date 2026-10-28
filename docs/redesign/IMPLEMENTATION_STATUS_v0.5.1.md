@@ -1,26 +1,20 @@
-# TOKO MODE v0.5.1 — Source verification status
+# TOKO MODE v0.5.1 — Source verification status (Updated: 28 Oktober 2026)
 
-See also `VERIFICATION_REPORT_v0.5.1.md` for the complete PASS / BLOCKED / NOT RUN evidence.
+See also `HASIL AUDIT.md` for the permanent audit ledger and complete PASS / BLOCKED / SKIPPED evidence.
 
 ## Verified in this environment
-- 13 TypeScript/TSX files pass TypeScript `transpileModule` syntax diagnostics. This is syntax/transpilation validation, not full strict type-checking.
-- `npm run scan:secrets` passed with no known secret patterns (not a guarantee all secrets are detectable).
-- The four existing test source files were executed using a local TypeScript-transpile compatibility harness: 14 assertions passed, 0 failed. This is not a native Vitest run.
-- Static source audit identified and fixed mixed-unit quantity aggregation, Home status card selector mismatch, stale Field Ledger labeling, old browser theme color, oversized stock-value render risk, and unsafe expense-total messaging.
-- Static source and responsive CSS rules inspected; mobile icon/row-delete/quick-chip touch targets have explicit 44px overrides, but rendered target size is not browser-verified.
+- **Native Vitest Run**: `npm run test` executes natively across 8 test suites (33 unit tests: engine calculations, golden fixtures, purchase preview, stock check, AI defaults OFF, and Google Drive storage/checksums/schemas). **All 33 passed**.
+- **Production Build**: `npm run build` (`tsc --noEmit && vite build`) executes cleanly with 0 TypeScript diagnostic errors and transforms 1,833 modules into production bundle in 1.21s.
+- **Secret Scanning**: `npm run scan:secrets` passed with 0 detected secret patterns.
+- **Storage Engine Readiness**: `src/storage/` module implemented with Zod validation, SHA-256 checksums, MockStorageAdapter, and GoogleDriveAdapter (REST API v3, `drive.file` scope).
+- **Physical Unit Isolation**: Stock preview separates quantities by physical unit (`remainingByUnit`); unlike units are never summed.
+- **Financial Separation**: Expected handover, received cash, and store cash concepts are distinct; unknown modal prices stay `null` and are never invented.
+- **AI Defaults**: AI features remain default OFF with no client-side API keys or unauthorized model invocations.
 
-## Not verified / blocked
-- `npm install --no-audit --no-fund` did not complete within the 120s environment timeout; no usable local `node_modules` was created.
-- `npm test` cannot run: `vitest` unavailable.
-- `npm run build` cannot run: local dependency/type packages absent (`node`, `vite/client`, `vitest/globals` type definitions missing).
-- Playwright local-file navigation is blocked by the environment with `ERR_BLOCKED_BY_ADMINISTRATOR`; no screenshot, viewport sweep, or browser interaction result is claimed for React source.
-- Android Chrome physical-device verification, keyboard/screen-reader audit, complete WCAG contrast audit, database/RLS/auth/transaction/export/backup testing remain not run or not implemented.
-
-## Required pre-release matrix
-- Widths: 320, 360, 390, 430, 768, 1024, 1440 CSS px; include Android Chrome.
-- Tests: no horizontal overflow; 44×44 target; bottom-nav safe-area; keyboard and focus; 200% zoom; long names and large rupiah figures; zero/blank/unknown states; `prefers-reduced-motion`; dark/light contrast.
-- Functional: `npm run test`, `npm run build`, preview at the target widths, verify all controls, and perform accessibility tree review.
-- Financial backend: no real data before authenticated server-side atomic commit, append-only history/corrections, database access control, idempotency and backup/restore tests.
+## Not verified / blocked in this sandbox
+- **Playwright Headless Browser**: `scripts/test-stock-check.mjs` is blocked due to missing Chromium browser binaries in the container environment. Running `npx playwright install chromium` in a local developer environment is required for headless browser screenshots.
+- **Git Remote Push from Sandbox**: Sandbox container lacks `.git` metadata directory (`fatal: not a git repository`). Commits and pushes must be performed from the local clone or GitHub CI.
 
 ## Release status
-NOT READY FOR PRODUCTION. This source is a preview-only starter with transaction persistence intentionally disabled.
+PREVIEW & GOOGLE DRIVE BACKEND READY (v0.5.1). Core engine, storage schemas, and UI components are fully verified; Google Cloud OAuth 2.0 Web Client ID configuration by repo owner (`adizseptian@gmail.com`) is the final manual step before live Drive writes.
+

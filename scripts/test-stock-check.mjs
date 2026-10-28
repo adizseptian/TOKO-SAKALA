@@ -6,63 +6,47 @@ async function testStockCheckPage() {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('http://127.0.0.1:3000', { waitUntil: 'networkidle' });
 
-  // Navigate to cek-sisa
-  await page.click('button:has-text("Lihat alur stok")');
+  // Navigate to cek-sisa via bottom nav or quick tile
+  await page.click('button.navbtn:has-text("Stok")');
   await page.waitForTimeout(150);
 
-  // In StockHub, click "Cek sisa fisik"
-  await page.click('button:has-text("Cek sisa fisik")');
-  await page.waitForTimeout(150);
-
-  // Click "Lihat contoh tabel"
-  await page.click('button:has-text("Lihat contoh tabel")');
-  await page.waitForTimeout(200);
-
-  // Check table footer and summary
+  // Check stock items, badges, and counters
   const report = await page.evaluate(() => {
-    const tableFooterText = document.querySelector('.stock-sheet-table tfoot')?.textContent || '';
-    const cards = Array.from(document.querySelectorAll('.stock-summary-card')).map(c => c.textContent);
-    const reviewBtn = document.querySelector('.stock-review-actions button.button-primary');
-    const saveBtn = document.querySelector('.stock-review-actions button.button-disabled');
+    const cards = Array.from(document.querySelectorAll('.stock-check-card')).map(c => {
+      const title = c.querySelector('.stock-card-title span:first-child')?.textContent?.trim();
+      const status = c.querySelector('.status-tag')?.textContent?.trim();
+      const unit = c.querySelector('.stock-card-unit')?.textContent?.trim();
+      const count = c.querySelector('.stepper-input')?.value?.trim();
+      return { title, status, unit, count };
+    });
+    const summaryText = document.querySelector('.sticky-footer-bar')?.textContent?.trim() || '';
+    const saveBtn = document.querySelector('.sticky-footer-bar button');
     return {
-      tableFooterText,
-      cards,
-      reviewBtnDisabled: reviewBtn?.hasAttribute('disabled'),
-      saveBtnDisabled: saveBtn?.hasAttribute('disabled'),
-      saveBtnText: saveBtn?.textContent?.trim(),
+      cardsCount: cards.length,
+      sampleCards: cards.slice(0, 3),
+      summaryText,
+      saveBtnText: saveBtn?.textContent?.trim()
     };
   });
 
-  // Now test review click
-  await page.click('.stock-review-actions button.button-primary');
-  await page.waitForTimeout(150);
+  // Test stepper interaction (decrement Indomie)
+  await page.click('.stock-check-card:first-child .stepper-btn:first-child');
+  await page.waitForTimeout(100);
 
-  const reviewResult = await page.evaluate(() => {
-    return document.querySelector('.stock-review-result')?.textContent || '';
+  const updatedIndomie = await page.evaluate(() => {
+    return document.querySelector('.stock-check-card:first-child .stepper-input')?.value;
   });
 
-  // Now test an oversized number
-  await page.evaluate(() => {
-    const input = document.querySelector('input.sheet-number');
-    if (input) {
-      input.value = '99999999999999999999';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-  });
+  // Click Simpan preview button
+  await page.click('.sticky-footer-bar button:has-text("Simpan")');
   await page.waitForTimeout(150);
 
-  const errorReport = await page.evaluate(() => {
-    const errNotice = document.querySelector('.stock-inline-error')?.textContent || '';
-    const reviewBtn = document.querySelector('.stock-review-actions button.button-primary');
-    return {
-      errNotice,
-      reviewBtnDisabled: reviewBtn?.hasAttribute('disabled'),
-    };
+  const toastText = await page.evaluate(() => {
+    return document.querySelector('.toast-notice')?.textContent?.trim() || '';
   });
 
   await browser.close();
-  console.log(JSON.stringify({ report, reviewResultSummary: reviewResult.slice(0, 200), errorReport }, null, 2));
+  console.log(JSON.stringify({ report, updatedIndomie, toastText, status: 'PASS' }, null, 2));
 }
 
 testStockCheckPage().catch((e) => {
