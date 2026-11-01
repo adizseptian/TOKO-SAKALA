@@ -40,7 +40,11 @@ export interface StorageAdapter {
   /**
    * Menyimpan dokumen toko dengan checksum baru dan kenaikan versi
    */
-  saveData(payload: TokoSakalaPayload, baseVersion?: number): Promise<SaveResult>;
+  saveData(
+    payload: TokoSakalaPayload,
+    baseVersion?: number,
+    options?: { idempotencyKey?: string; deviceId?: string }
+  ): Promise<SaveResult>;
 
   /**
    * Membuat file cadangan (backup) berstempel waktu

@@ -44,6 +44,12 @@ export interface ConnectionTestResult {
   error?: string;
 }
 
+/**
+ * @deprecated [UNUSED UNTUK TRANSAKSI AKTIF]
+ * Sesuai arsitektur DR-011, penyimpanan transaksi aktif kini menggunakan IndexedDB (offline-first)
+ * dan Supabase (cloud sync). GoogleDriveAdapter dipertahankan untuk riwayat, pencadangan manual,
+ * dan opsi mitigasi bencana pemilik toko.
+ */
 export class GoogleDriveAdapter implements StorageAdapter {
   readonly backendType = 'google_drive' as const;
 
@@ -57,7 +63,7 @@ export class GoogleDriveAdapter implements StorageAdapter {
 
   constructor(config: GoogleDriveConfig) {
     this.getAccessToken = config.getAccessToken;
-    this.userEmail = config.userEmail ?? 'adizseptian@gmail.com';
+    this.userEmail = config.userEmail ?? '';
   }
 
   private async getAuthHeaders(): Promise<Record<string, string>> {
@@ -503,11 +509,16 @@ export class GoogleDriveAdapter implements StorageAdapter {
     const headers = await this.getAuthHeaders();
 
     // 1. Ambil snapshot pengaman dari data saat ini sebelum ditimpa
-    let safetySnapshot: BackupMetadata | undefined;
+    let safetySnapshot: BackupMetadata;
     try {
       safetySnapshot = await this.createBackup('Snapshot otomatis sebelum pemulihan cadangan');
-    } catch {
-      // Catat peringatan tapi jangan gagalkan jika file data belum ada
+    } catch (err) {
+      return {
+        success: false,
+        restoredVersion: this.lastKnownVersion,
+        backupId,
+        error: `Pemulihan dibatalkan demi keamanan data: gagal membuat snapshot keselamatan sebelum pemulihan (${err instanceof Error ? err.message : 'Kesalahan snapshot'}).`,
+      };
     }
 
     // 2. Ambil isi file cadangan dari Google Drive

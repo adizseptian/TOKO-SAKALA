@@ -133,9 +133,10 @@ export class GoogleAuthService {
     } catch {
       // Ignore
     }
-    this.initClientId();
+    this.clientId = null;
     this.tokenClient = null;
     this.disconnect();
+    this.setAuthState('UNCONFIGURED');
     this.notifyListeners();
   }
 
@@ -289,11 +290,8 @@ export class GoogleAuthService {
 
     // Ambil profil pengguna di latar belakang
     this.fetchUserProfile(response.access_token).catch(() => {
-      // Default ke email pemilik jika fetch profil gagal
-      if (!this.userInfo) {
-        this.userInfo = { email: 'adizseptian@gmail.com' };
-        this.notifyListeners();
-      }
+      // Jika fetch profil gagal, biarkan userInfo null sampai pengguna melakukan getAbout di Drive API
+      this.notifyListeners();
     });
   }
 
@@ -350,25 +348,36 @@ export class GoogleAuthService {
   /**
    * Mengambil data email pengguna dari Google API
    */
-  private async fetchUserProfile(token: string): Promise<GoogleUserInfo | null> {
+  async fetchUserProfile(token: string): Promise<GoogleUserInfo | null> {
     try {
       const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
-        this.userInfo = {
-          email: data.email || 'adizseptian@gmail.com',
-          name: data.name,
-          picture: data.picture,
-        };
-        this.notifyListeners();
-        return this.userInfo;
+        if (data.email) {
+          this.userInfo = {
+            email: data.email,
+            name: data.name,
+            picture: data.picture,
+          };
+          this.notifyListeners();
+          return this.userInfo;
+        }
       }
     } catch {
       // Abaikan jika userinfo endpoint tidak dapat diakses
     }
     return null;
+  }
+
+  setUserEmailFromDrive(email: string): void {
+    if (this.userInfo) {
+      this.userInfo.email = email;
+    } else {
+      this.userInfo = { email };
+    }
+    this.notifyListeners();
   }
 
   /**

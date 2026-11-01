@@ -138,4 +138,20 @@ describe('GoogleDriveAdapter REST API v3 Integration', () => {
     const status = await adapter.getStatus();
     expect(status.checksumStatus).toBe('CORRUPT');
   });
+
+  it('membatalkan pemulihan dan mengembalikan error jika snapshot keselamatan gagal', async () => {
+    const adapter = new GoogleDriveAdapter({
+      getAccessToken: async () => 'mock-oauth-token',
+      userEmail: 'adizseptian@gmail.com',
+    });
+
+    // Mock createBackup to fail
+    vi.spyOn(adapter, 'createBackup').mockRejectedValueOnce(new Error('Koneksi terputus saat snapshot'));
+
+    const result = await adapter.restoreBackup('backup-file-999');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Pemulihan dibatalkan demi keamanan data');
+    expect(result.error).toContain('Koneksi terputus saat snapshot');
+  });
 });
+

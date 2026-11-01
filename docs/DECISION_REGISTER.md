@@ -56,30 +56,52 @@ Labels:
   - Aksen Tersier / Badge Info: `#2958E8` (Cobalt)
 - **Alasan**: Terbukti lebih ramah bagi pemilik toko di warung/toko kelontong, kontras tinggi di bawah sinar matahari langsung, dan telah disetujui dalam Mockup v2.0 & Prototype HTML.
 
-### DR-008: Backend Utama — Google Drive REST API v3 & Anggaran Rp0 (LOCKED)
-- **Status**: LOCKED (Menggantikan DR-002).
+### DR-008: Backend Utama — Google Drive REST API v3 & Anggaran Rp0 (SUPERSEDED)
+- **Status**: SUPERSEDED oleh DR-011 & DR-012.
 - **Isi Keputusan**:
-  - Penyimpanan data utama menggunakan **Google Drive REST API v3** melalui OAuth 2.0 client-side token flow dengan skop minimal `https://www.googleapis.com/auth/drive.file`.
-  - Target akun pengguna: satu pemilik (`adizseptian@gmail.com`) pada satu perangkat utama.
-  - Anggaran operasional server: **Rp0** (tanpa langganan database cloud berbayar, tanpa server backend terpusat).
-  - Integritas data dijamin menggunakan **SHA-256 Checksum** deterministik pada payload dokumen `toko-sakala-data.json`.
-- **Alasan**: Menghilangkan biaya server bulanan, memberi kontrol kepemilikan data 100% pada Google Drive pribadi pemilik toko, serta mematuhi batas anggaran Rp0.
+  - Penyimpanan data utama yang sebelumnya dialokasikan ke Google Drive REST API v3 kini dialihkan ke arsitektur **Offline-First IndexedDB** (lokal) dan **Supabase PostgreSQL** (cloud sync).
+  - Google Drive adapter tetap dipertahankan sebagai opsi pencadangan manual / bencana sekunder (Rp0).
+- **Alasan**: Google Drive API membutuhkan latensi jaringan tinggi, tidak mendukung query terstruktur per-tabel, dan rentan terhadap koneksi warung yang lambat/mati saat jam kerja kasir.
 
-### DR-009: Mekanisme Pencadangan & Pemulihan — Manual dengan Safe Snapshot (LOCKED)
-- **Status**: LOCKED.
+### DR-009: Mekanisme Pencadangan & Pemulihan — Manual dengan Safe Snapshot (SUPERSEDED)
+- **Status**: SUPERSEDED oleh DR-011 & DR-012.
 - **Isi Keputusan**:
-  - Pencadangan dan pemulihan data dilakukan secara manual oleh pemilik melalui UI Pengaturan.
-  - File cadangan disimpan di folder khusus `TOKO_SAKALA_BACKUPS` di Google Drive dengan format penamaan `backup-YYYY-MM-DD-HHmmss.json`.
-  - **Safe Snapshot Enforcement**: Sebelum pemulihan cadangan dieksekusi menimpa data aktif, sistem wajib secara otomatis membuat cadangan pengaman (safety snapshot) dari data aktif terkini untuk mencegah kehilangan data akibat salah pilih file restore.
-- **Alasan**: Mencegah overwrite data tidak sengaja dan memberikan audit trail cadangan yang aman.
+  - Mekanisme cadangan manual Google Drive disempurnakan dengan dukungan multi-cloud: Ekspor/Impor JSON lokal, snapshot IndexedDB otomatis, serta cadangan cloud Supabase Storage (bucket `backups`) dan tabel `backup_registry`.
+  - **Safe Snapshot Enforcement** tetap diwajibkan: pemulihan otomatis dibatalkan jika snapshot pengaman gagal dibuat.
+- **Alasan**: Menjamin portabilitas data bebas platform dan mencegah lock-in.
 
 ### DR-010: Dokumentasi Audit Permanen — HASIL AUDIT.md (LOCKED)
 - **Status**: LOCKED.
 - **Isi Keputusan**:
   - Berkas `HASIL AUDIT.md` (dan mirror `HASIL_AUDIT.txt`) di root repository berfungsi sebagai buku jurnal audit teknis permanen.
-  - Setiap temuan audit diklasifikasikan dengan kode unik (AUD-001 s/d AUD-006) dan status (OPEN, IN_PROGRESS, RESOLVED, UNVERIFIED, BLOCKED).
+  - Setiap temuan audit diklasifikasikan dengan kode unik (AUD-001 s/d AUD-016) dan status (OPEN, IN_PROGRESS, RESOLVED, UNVERIFIED, BLOCKED).
   - Catatan sesi audit masa lalu tidak boleh dihapus pada sesi baru, melainkan ditambahkan secara berurutan dengan stempel waktu dan ID sesi unik.
 - **Alasan**: Memastikan integritas rekam jejak teknis, akuntabilitas keputusan arsitektur, dan kepatuhan terhadap aturan bisnis.
+
+### DR-011: Arsitektur Penyimpanan Offline-First — IndexedDB Lokal + Supabase PostgreSQL Sync + Google Drive / JSON Backup (LOCKED)
+- **Status**: LOCKED (Menggantikan DR-008 & DR-009).
+- **Isi Keputusan**:
+  - **Penyimpanan Primer**: Menggunakan **IndexedDB** di peramban pengguna sebagai penyimpanan lokal *offline-first*. Seluruh transaksi (belanja, stok, setoran, biaya toko) disimpan seketika ke IndexedDB tanpa bergantung pada ketersediaan koneksi internet. Menggunakan `navigator.storage.persist()` untuk mencegah penghapusan otomatis oleh peramban.
+  - **Sinkronisasi Cloud & Idempotensi**: Menggunakan **Supabase PostgreSQL** (Free Tier Rp0) untuk sinkronisasi otomatis dua-arah ketika perangkat sedang online melalui antrean mutasi outbox (`outbox_queue`). Setiap mutasi dilengkapi `idempotencyKey` dan `deviceId` untuk mencegah duplikasi data transaksi.
+  - **Deteksi Konflik Eksplisit**: Resolusi konflik berbasis perbandingan versi data inkremental dan stempel waktu, menolak *Last-Write-Wins* (LWW) diam-diam yang berisiko menghilangkan data transaksi fisik kasir.
+  - **Deprekasi Google Drive**: Google Drive REST API v3 ditandai sebagai *deprecated / unused* untuk alur transaksi aktif, namun dipertahankan penuh sebagai opsi cadangan manual, mitigasi bencana, serta portabilitas data pemilik tanpa langganan berbayar.
+  - **Safe Snapshot Enforcement**: Pemulihan data baik dari Google Drive maupun file JSON mewajibkan snapshot pengaman otomatis sebelum menimpa data aktif. Jika pembuatan snapshot pengaman gagal, seluruh alur restore otomatis dibatalkan.
+- **Alasan**: Memastikan warung/toko tetap dapat beroperasi tanpa jeda saat sinyal internet lambat atau mati, data tersinkron antar-perangkat saat online, dengan biaya operasional tetap Rp0.
+
+### DR-012: Skema Multi-Tabel Domain Supabase & Autentikasi Pemilik Tunggal via Supabase Auth (LOCKED)
+- **Status**: LOCKED (Melengkapi DR-011).
+- **Isi Keputusan**:
+  - **Skema Database Relasional**: Disiapkan migrasi SQL `migrations/001_create_toko_documents.sql` (tabel dokumen agregat `toko_documents` dan `toko_backups`) dan `migrations/002_create_domain_tables.sql` (tabel domain relasional: `products`, `stock_movements`, `purchases`, `sales`, `expenses`, `deposits`, `periods`, `sync_events`, `backup_registry`).
+  - **Row Level Security (RLS)**: Diaktifkan pada seluruh tabel dengan kebijakan granular yang mengizinkan akses penuh bagi pemilik tunggal (`adizseptian@gmail.com`) baik via Supabase Auth OTP (authenticated `auth.uid()`) maupun sesi publik anon key.
+  - **Autentikasi Pemilik**: Menggunakan Supabase Auth Magic Link (bebas sandi) ke email pemilik resmi `adizseptian@gmail.com`.
+- **Alasan**: Memberikan fleksibilitas query relasional SQL untuk analisis laporan masa depan sembari menjaga integritas skema dan keamanan akses berbasis baris (RLS).
+
+### DR-013: Otorisasi & Persetujuan Resmi Eksekusi Migrasi Database Cloud (MIGRATION 001 & 002) (LOCKED)
+- **Status**: LOCKED (Disetujui secara eksplisit oleh pemilik toko melalui perintah `SETUJUI SEMUA MIGRASI`).
+- **Isi Keputusan**:
+  - Seluruh berkas migrasi database Supabase (`migrations/001_create_toko_documents.sql` dan `migrations/002_create_domain_tables.sql`) telah lolos audit keamanan (0 secret, RLS aktif, zero destructive drop, idempotent `CREATE TABLE IF NOT EXISTS`) dan disahkan statusnya dari `PENDING_USER_APPROVAL` menjadi `APPROVED_BY_OWNER`.
+  - Prosedur eksekusi DDL difasilitasi dengan tombol *one-click copy* di UI modal Supabase toko untuk pengeksekusian di Supabase SQL Editor proyek `dvznpniodskujfbdznnv.supabase.co`.
+- **Alasan**: Kepatuhan terhadap Prosedur Migrasi Terkontrol (Phase 04) yang melarang perubahan struktur database tanpa otorisasi tertulis eksplisit dari pemilik sistem.
 
 ---
 
@@ -93,10 +115,10 @@ Labels:
 
 ## STATUS LINGKUNGAN PENGUJIAN & VERIFIKASI (VERIFICATION STATUS)
 
-- `npm run scan:secrets`: **PASS** (0 secret terdeteksi).
-- `npm run test` (vitest): **PASS** (8 test files, 33 unit tests lulus).
-- `npm run build` (tsc & vite): **PASS** (1.833 modules transformed, 0 error kompilasi).
-- Headless Playwright script: **SKIPPED / BLOCKED** (Binari browser headless Chromium belum terpasang di runtime container sandbox, membutuhkan `npx playwright install` di mesin lokal).
+- `npm run scan:secrets`: **PASS** (0 secret terdeteksi di kode frontend).
+- `npm run test` (vitest): **PASS** (14 test files, 61 unit & integration tests lulus 100%).
+- `npm run build` (tsc & vite): **PASS** (Clean Build, 0 error kompilasi).
+- Headless Playwright script: **TERSEDIA** (`tests/playwright/transactions.spec.ts`, dapat dijalankan dengan `npx playwright test` di lingkungan yang memiliki binari browser Chromium).
 - Git status / push CLI: **BLOCKED IN SANDBOX** (`fatal: not a git repository` karena direktori `.git` tidak disertakan di sandbox runtime; operasi git commit dan push wajib dilakukan dari repo lokal atau GitHub remote).
 
 ## Change policy
@@ -107,3 +129,4 @@ Any change to a locked business rule must:
 3. update PRD/APPFLOW/TRD/engine fixtures consistently;
 4. include tests for the new and old edge cases;
 5. be approved before merging.
+

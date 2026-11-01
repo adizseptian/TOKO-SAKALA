@@ -4,16 +4,31 @@ import {
   Package, Wallet, FileText, ArrowLeft, Search, SlidersHorizontal, Plus,
   Minus, Check, ArrowRight, CornerDownLeft, Sparkles, RefreshCw, Moon, Sun,
   Cloud, Database, ShieldCheck, History, HardDrive, KeyRound, ExternalLink,
-  CheckCircle2, XCircle
+  CheckCircle2, XCircle, Download, Upload, Server
 } from 'lucide-react';
+import { ModalForm } from '@/components/ModalForm';
 import { calculatePurchasePreview } from '@/engine/v1/purchase-preview';
 import { calculateStockCheckPreview } from '@/engine/v1/stock-check-preview';
 import {
   googleAuth,
   GoogleDriveAdapter,
+  IndexedDBAdapter,
+  SupabaseAdapter,
+  SyncEngine,
+  createDefaultPayload,
   type AuthState,
   type BackupMetadata,
+  type TokoSakalaPayload,
+  type PurchaseRecord,
+  type ExpenseRecord,
+  type DepositRecord,
+  type SyncEngineStatus,
 } from '@/storage';
+import {
+  signInOwnerWithOtp,
+  signOutOwner,
+  getCurrentOwnerUser,
+} from '@/auth/supabaseClient';
 
 type PrimaryTab = 'beranda' | 'catat' | 'stok' | 'setoran' | 'lainnya';
 type Screen = PrimaryTab | 'biaya' | 'laporan' | 'riwayat' | 'barang' | 'asisten' | 'pengaturan';
@@ -24,9 +39,10 @@ interface ProductItem {
   category: 'Makanan' | 'Minuman' | 'Rokok' | 'Lainnya';
   unit: string;
   packSize: number;
-  costPerPack: number;
+  costPerPack: number | null;
   sellingPricePerUnit: number;
   icon: string;
+  active?: boolean;
 }
 
 const INITIAL_CATALOG: ProductItem[] = [
@@ -44,11 +60,45 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Single validated business data payload from schema
+  const [docPayload, setDocPayload] = useState<TokoSakalaPayload>(() => createDefaultPayload());
+
+  // Dynamic Catalog: Merges default catalog and user-added custom products from docPayload
+  const catalogList = useMemo<ProductItem[]>(() => {
+    const custom = (docPayload.products || []).map(p => ({
+      id: p.id,
+      name: p.name,
+      category: p.category as 'Makanan' | 'Minuman' | 'Rokok' | 'Lainnya',
+      unit: p.unit,
+      packSize: p.packSize,
+      costPerPack: p.costPerPack ?? null,
+      sellingPricePerUnit: p.sellingPricePerUnit,
+      icon: p.icon || '📦',
+      active: p.active ?? true,
+    }));
+    const customIds = new Set(custom.map(c => c.id));
+    const defaults = INITIAL_CATALOG.filter(d => !customIds.has(d.id));
+    return [...defaults, ...custom];
+  }, [docPayload.products]);
+
   // Screen 2: Catat Belanja State
   const [selectedProduct, setSelectedProduct] = useState<ProductItem>(INITIAL_CATALOG[0]);
   const [purchaseQty, setPurchaseQty] = useState<number>(2);
+  const [purchaseUnit, setPurchaseUnit] = useState<string>('dus');
+  const [customPurchaseCost, setCustomPurchaseCost] = useState<string>('');
   const [catatCategory, setCatatCategory] = useState<string>('Semua');
   const [catatSearch, setCatatSearch] = useState<string>('');
+
+  // Master Product Modal State
+  const [showAddProductModal, setShowAddProductModal] = useState<boolean>(false);
+  const [newProdName, setNewProdName] = useState<string>('');
+  const [newProdCategory, setNewProdCategory] = useState<'Makanan' | 'Minuman' | 'Rokok' | 'Lainnya'>('Makanan');
+  const [newProdUnit, setNewProdUnit] = useState<string>('Dus (24 pcs)');
+  const [newProdPackSize, setNewProdPackSize] = useState<number>(24);
+  const [newProdCostPerPack, setNewProdCostPerPack] = useState<string>('');
+  const [newProdIsCostUnknown, setNewProdIsCostUnknown] = useState<boolean>(false);
+  const [newProdSellingPrice, setNewProdSellingPrice] = useState<string>('3000');
+  const [newProdIcon, setNewProdIcon] = useState<string>('📦');
 
   // Screen 3: Cek Sisa Stok State
   const [stockCounts, setStockCounts] = useState<Record<string, number | null>>({
@@ -66,27 +116,97 @@ export default function App() {
   const [expectedAmount] = useState<number>(1250000);
   const [receivedAmount, setReceivedAmount] = useState<number>(1200000);
   const [depositNote, setDepositNote] = useState<string>('');
-  const [depositDate, setDepositDate] = useState<string>('Rabu, 28 Okt 2025');
+  const [depositDate, setDepositDate] = useState<string>(() => {
+    return new Intl.DateTimeFormat('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    }).format(new Date());
+  });
 
-  // Google Drive Real Backend & Storage State
+  // Secondary Screen: Biaya Toko State
+  const [expenseName, setExpenseName] = useState<string>('');
+  const [expenseAmount, setExpenseAmount] = useState<number>(0);
+
+  // Internal Modals State (Eliminating window.prompt)
+  const [showDateModal, setShowDateModal] = useState<boolean>(false);
+  const [customDateInput, setCustomDateInput] = useState<string>('');
+  const [showAmountModal, setShowAmountModal] = useState<boolean>(false);
+  const [customAmountInput, setCustomAmountInput] = useState<string>('1200000');
+  const [showDiscrepancyModal, setShowDiscrepancyModal] = useState<boolean>(false);
+
+  // Storage Adapters: Offline-First (IndexedDB), Cloud Sync (Supabase), dan Cloud Backup (Google Drive)
+  const [localIndexedDB] = useState(() => new IndexedDBAdapter());
+  const [supabaseAdapter] = useState(() => new SupabaseAdapter());
+  const [syncEngine] = useState(() => new SyncEngine(localIndexedDB, supabaseAdapter));
+  const [syncStatus, setSyncStatus] = useState<SyncEngineStatus>(() => syncEngine.getStatus());
+
   const [driveAdapter] = useState(() => new GoogleDriveAdapter({
     getAccessToken: () => googleAuth.getValidAccessToken(),
-    userEmail: 'adizseptian@gmail.com',
+    userEmail: googleAuth.getUserInfo()?.email || '',
   }));
 
   const [authState, setAuthState] = useState<AuthState>(googleAuth.getAuthState());
   const [authError, setAuthError] = useState<string | null>(googleAuth.getErrorMessage());
   const [userInfo, setUserInfo] = useState(googleAuth.getUserInfo());
-  const [dataVersion, setDataVersion] = useState<number>(1);
-  const [checksumStatus, setChecksumStatus] = useState<'VALID' | 'CORRUPT' | 'UNCHECKED'>('VALID');
+  const [dataVersion, setDataVersion] = useState<number>(0);
+  const [checksumStatus, setChecksumStatus] = useState<'VALID' | 'CORRUPT' | 'UNCHECKED'>('UNCHECKED');
   const [lastBackupTime, setLastBackupTime] = useState<string>('Belum ada cadangan');
   const [backups, setBackups] = useState<BackupMetadata[]>([]);
   const [isBackingUp, setIsBackingUp] = useState<boolean>(false);
   const [isCheckingConnection, setIsCheckingConnection] = useState<boolean>(false);
   const [showRestoreModal, setShowRestoreModal] = useState<boolean>(false);
   const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
+  const [showSupabaseModal, setShowSupabaseModal] = useState<boolean>(false);
   const [clientIdInput, setClientIdInput] = useState<string>(googleAuth.getClientId() || '');
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState<string>(() => supabaseAdapter.getCredentials().url || 'https://dvznpniodskujfbdznnv.supabase.co');
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState<string>(() => supabaseAdapter.getCredentials().anonKey || '');
   const [storageQuota, setStorageQuota] = useState<{ usageBytes: number; limitBytes?: number } | null>(null);
+  const [supabaseUser, setSupabaseUser] = useState<{ email?: string } | null>(null);
+  const [isSendingOtp, setIsSendingOtp] = useState<boolean>(false);
+
+  useEffect(() => {
+    getCurrentOwnerUser().then(u => {
+      if (u) setSupabaseUser({ email: u.email });
+    }).catch(() => {});
+  }, []);
+
+  // Device ID stabil untuk mencegah duplikasi mutasi antar-perangkat
+  const [deviceId] = useState<string>(() => {
+    if (typeof localStorage !== 'undefined') {
+      let id = localStorage.getItem('toko_sakala_device_id');
+      if (!id) {
+        id = `dev-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
+        localStorage.setItem('toko_sakala_device_id', id);
+      }
+      return id;
+    }
+    return 'device-primary';
+  });
+
+  // Inisialisasi awal dokumen toko secara Offline-First dari IndexedDB
+  useEffect(() => {
+    localIndexedDB.requestPersistentStorage().catch(() => {});
+
+    localIndexedDB.loadData().then(doc => {
+      setDocPayload(doc.payload);
+      setDataVersion(doc.dataVersion);
+      setChecksumStatus('VALID');
+    }).catch(err => {
+      console.warn('Inisialisasi IndexedDB lokal:', err);
+    });
+
+    const unsubSync = syncEngine.subscribe(status => {
+      setSyncStatus(status);
+    });
+    syncEngine.start(30000);
+
+    return () => {
+      unsubSync();
+      syncEngine.stop();
+    };
+  }, [localIndexedDB, syncEngine]);
 
   // Subscribe ke status otentikasi Google Identity Services
   useEffect(() => {
@@ -99,8 +219,19 @@ export default function App() {
       }
     });
 
-    // Jika sudah terhubung, sinkronkan daftar cadangan dan status kuota
+    // Jika Google Drive terhubung, sinkronkan daftar cadangan dan status kuota
     if (googleAuth.getAuthState() === 'CONNECTED') {
+      driveAdapter.loadData().then(doc => {
+        // Jika data Drive lebih mutakhir daripada lokal, sinkronkan
+        if (doc.dataVersion > dataVersion) {
+          setDocPayload(doc.payload);
+          setDataVersion(doc.dataVersion);
+          setChecksumStatus('VALID');
+        }
+      }).catch(err => {
+        console.warn('Gagal memuat dokumen Google Drive:', err);
+      });
+
       driveAdapter.testConnection().then(conn => {
         if (conn.ok && conn.storageQuota) {
           setStorageQuota(conn.storageQuota);
@@ -116,7 +247,7 @@ export default function App() {
     }
 
     return () => unsubscribe();
-  }, [driveAdapter]);
+  }, [driveAdapter, dataVersion]);
 
   const handleConnectGoogle = async () => {
     if (authState === 'UNCONFIGURED') {
@@ -128,6 +259,15 @@ export default function App() {
       await googleAuth.requestAccessToken(false);
       showToast('Otorisasi Google Drive berhasil!');
       
+      try {
+        const doc = await driveAdapter.loadData();
+        setDocPayload(doc.payload);
+        setDataVersion(doc.dataVersion);
+        setChecksumStatus('VALID');
+      } catch (loadErr) {
+        console.warn('Gagal memuat data setelah otorisasi:', loadErr);
+      }
+
       const conn = await driveAdapter.testConnection();
       if (conn.ok && conn.storageQuota) {
         setStorageQuota(conn.storageQuota);
@@ -167,6 +307,319 @@ export default function App() {
     }
   };
 
+  const handleSyncCloudNow = async () => {
+    showToast('Menjalankan sinkronisasi dua arah...');
+    const res = await syncEngine.syncNow();
+    if (res.success) {
+      const freshDoc = await localIndexedDB.loadData();
+      setDocPayload(freshDoc.payload);
+      setDataVersion(freshDoc.dataVersion);
+      showToast(`Sinkronisasi selesai! ${res.syncedCount} mutasi dikirim${res.pulledUpdate ? ', pembaruan cloud diterapkan' : ''}.`);
+    } else {
+      showToast(`Status sinkronisasi: ${res.error || 'Gagal tersinkron'}`);
+    }
+  };
+
+  const handleSaveSupabaseConfig = () => {
+    const url = supabaseUrlInput.trim();
+    const key = supabaseKeyInput.trim();
+    if (!url || !key) {
+      showToast('URL dan Anon Key Supabase tidak boleh kosong.');
+      return;
+    }
+    supabaseAdapter.setRuntimeCredentials(url, key);
+    setShowSupabaseModal(false);
+    showToast('Konfigurasi Supabase tersimpan! Mencoba sinkronisasi...');
+    syncEngine.syncNow().catch(() => {});
+  };
+
+  const handleResetSupabaseConfig = () => {
+    supabaseAdapter.clearRuntimeCredentials();
+    setSupabaseUrlInput('');
+    setSupabaseKeyInput('');
+    setSupabaseUser(null);
+    setShowSupabaseModal(false);
+    showToast('Kredensial Supabase telah di-reset.');
+  };
+
+  const handleSendMagicLink = async () => {
+    if (!supabaseAdapter.isConfigured()) {
+      showToast('Konfigurasi URL dan Anon Key Supabase terlebih dahulu.');
+      return;
+    }
+    setIsSendingOtp(true);
+    try {
+      const res = await signInOwnerWithOtp('adizseptian@gmail.com');
+      if (res.success) {
+        showToast('Tautan masuk (Magic Link) berhasil dikirim ke adizseptian@gmail.com! Silakan periksa email Anda.');
+      } else {
+        showToast(`Gagal: ${res.error}`);
+      }
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleSignOutSupabase = async () => {
+    await signOutOwner();
+    setSupabaseUser(null);
+    showToast('Telah keluar dari sesi Supabase Auth.');
+  };
+
+  const handleExportJson = async () => {
+    try {
+      const jsonStr = await localIndexedDB.exportAsJson();
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `toko-sakala-data-v${dataVersion}-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('Cadangan file JSON berhasil diunduh!');
+    } catch (err) {
+      showToast(`Gagal mengekspor file: ${err instanceof Error ? err.message : 'Error'}`);
+    }
+  };
+
+  const handleImportJsonFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      showToast('Membaca file cadangan JSON...');
+      const text = await file.text();
+      const res = await localIndexedDB.importFromJson(text);
+      if (res.success) {
+        const freshDoc = await localIndexedDB.loadData();
+        setDocPayload(freshDoc.payload);
+        setDataVersion(freshDoc.dataVersion);
+        setChecksumStatus('VALID');
+        showToast(`Data berhasil dipulihkan dari file JSON (v${freshDoc.dataVersion})!`);
+      } else {
+        showToast(`Impor gagal: ${res.error}`);
+      }
+    } catch (err) {
+      showToast(`Gagal membaca file: ${err instanceof Error ? err.message : 'Error'}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const executeSaveTransaction = async (
+    nextPayload: TokoSakalaPayload,
+    successTitle: string
+  ): Promise<boolean> => {
+    try {
+      // 1. Simpan ke IndexedDB lokal (offline-first menjamin persistensi langsung di browser)
+      const idempotencyKey = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      const localRes = await localIndexedDB.saveData(nextPayload, dataVersion > 0 ? dataVersion : undefined, {
+        idempotencyKey,
+        deviceId,
+      });
+      if (!localRes.success) {
+        showToast(`Gagal menyimpan ke penyimpanan lokal: ${localRes.error}`);
+        return false;
+      }
+
+      setDocPayload(nextPayload);
+      setDataVersion(localRes.dataVersion);
+      setChecksumStatus('VALID');
+
+      // 2. Jika Supabase dikonfigurasi & perangkat online, sinkronkan otomatis
+      if (supabaseAdapter.isConfigured() && (typeof navigator === 'undefined' || navigator.onLine)) {
+        syncEngine.syncNow().then(syncRes => {
+          if (syncRes.success) {
+            showToast(`${successTitle} tersimpan di IndexedDB & tersinkron ke Supabase (v${localRes.dataVersion})!`);
+          } else {
+            showToast(`${successTitle} tersimpan di IndexedDB lokal (v${localRes.dataVersion}). Menunggu jaringan/sinkronisasi.`);
+          }
+        }).catch(() => {
+          showToast(`${successTitle} tersimpan di IndexedDB lokal (v${localRes.dataVersion})!`);
+        });
+      } else if (authState === 'CONNECTED') {
+        // Jika Google Drive terhubung, kirim juga salinan ke Google Drive
+        driveAdapter.saveData(nextPayload, localRes.dataVersion).catch(() => {});
+        showToast(`${successTitle} tersimpan ke IndexedDB & Google Drive (v${localRes.dataVersion})!`);
+      } else {
+        showToast(`${successTitle} berhasil disimpan ke IndexedDB lokal (v${localRes.dataVersion})!`);
+      }
+
+      return true;
+    } catch (err) {
+      showToast(`Gagal: ${err instanceof Error ? err.message : 'Kesalahan jaringan'}`);
+      return false;
+    }
+  };
+
+  const handleSavePurchase = async () => {
+    const qty = Math.max(1, purchaseQty);
+    const packSize = selectedProduct.packSize;
+    const computedCost = selectedProduct.costPerPack !== null
+      ? qty * selectedProduct.costPerPack
+      : Math.max(0, Number(customPurchaseCost) || 0);
+    const totalCost = computedCost;
+    const nowIso = new Date().toISOString();
+
+    const newPurchase: PurchaseRecord = {
+      id: `purch-${Date.now()}`,
+      occurredAt: nowIso,
+      productId: selectedProduct.id,
+      packs: qty,
+      unitsPerPack: packSize,
+      totalCost,
+      sourceMoney: 'STORE',
+    };
+
+    const newMovement = {
+      id: `mov-${Date.now()}`,
+      occurredAt: nowIso,
+      productId: selectedProduct.id,
+      type: 'IN_PURCHASE' as const,
+      quantity: qty * packSize,
+      unit: 'pcs',
+      notes: `Belanja ${qty} ${selectedProduct.unit}`,
+    };
+
+    const nextPayload: TokoSakalaPayload = {
+      ...docPayload,
+      purchaseRecords: [newPurchase, ...docPayload.purchaseRecords],
+      stockMovements: [newMovement, ...docPayload.stockMovements],
+    };
+
+    const ok = await executeSaveTransaction(nextPayload, `Pembelian ${selectedProduct.name} (+${qty * packSize} pcs)`);
+    if (ok) {
+      setPurchaseQty(1);
+      setCustomPurchaseCost('');
+    }
+  };
+
+  const handleAddProduct = async () => {
+    const trimmedName = newProdName.trim();
+    if (!trimmedName) {
+      showToast('Nama produk tidak boleh kosong.');
+      return;
+    }
+    const exists = catalogList.some(p => p.name.toLowerCase() === trimmedName.toLowerCase());
+    if (exists) {
+      showToast('Produk dengan nama tersebut sudah ada.');
+      return;
+    }
+    const packSize = Math.max(1, Number(newProdPackSize) || 1);
+    const sellingPrice = Math.max(0, Number(newProdSellingPrice) || 0);
+    const costPerPack = newProdIsCostUnknown || !newProdCostPerPack.trim()
+      ? null
+      : Math.max(0, Number(newProdCostPerPack) || 0);
+
+    const newProduct = {
+      id: `prod-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      name: trimmedName,
+      category: newProdCategory,
+      unit: newProdUnit.trim() || 'pcs',
+      packSize,
+      costPerPack,
+      sellingPricePerUnit: sellingPrice,
+      icon: newProdIcon || '📦',
+      active: true,
+    };
+
+    const nextPayload: TokoSakalaPayload = {
+      ...docPayload,
+      products: [...(docPayload.products || []), newProduct],
+    };
+
+    const ok = await executeSaveTransaction(nextPayload, `Produk ${trimmedName} berhasil didaftarkan`);
+    if (ok) {
+      setNewProdName('');
+      setNewProdCostPerPack('');
+      setNewProdIsCostUnknown(false);
+      setShowAddProductModal(false);
+      setSelectedProduct(newProduct);
+    }
+  };
+
+  const handleSaveStockCheck = async () => {
+    const nowIso = new Date().toISOString();
+    const newMovements = Object.entries(stockCounts)
+      .filter(([_, count]) => count !== null && count !== undefined)
+      .map(([pId, count]) => ({
+        id: `mov-stock-${pId}-${Date.now()}`,
+        occurredAt: nowIso,
+        productId: pId,
+        type: 'CHECK_ADJUSTMENT' as const,
+        quantity: Number(count),
+        unit: 'pcs',
+        notes: `Cek fisik sisa stok: ${count} pcs`,
+      }));
+
+    if (newMovements.length === 0) {
+      showToast('Belum ada item stok yang diisi untuk disimpan.');
+      return;
+    }
+
+    const nextPayload: TokoSakalaPayload = {
+      ...docPayload,
+      stockMovements: [...newMovements, ...docPayload.stockMovements],
+    };
+
+    await executeSaveTransaction(nextPayload, 'Pemeriksaan sisa stok');
+  };
+
+  const handleSaveDeposit = async () => {
+    const discrepancy = receivedAmount - expectedAmount;
+    const depositItem: DepositRecord = {
+      id: `dep-${Date.now()}`,
+      occurredAt: new Date().toISOString(),
+      expectedAmount,
+      receivedAmount,
+      discrepancy,
+      notes: depositNote.trim() ? `${depositDate} — ${depositNote.trim()}` : depositDate,
+    };
+
+    const nextPayload: TokoSakalaPayload = {
+      ...docPayload,
+      deposits: [depositItem, ...docPayload.deposits],
+    };
+
+    const ok = await executeSaveTransaction(nextPayload, 'Setoran karyawan');
+    if (ok) {
+      setDepositNote('');
+    }
+  };
+
+  const handleSaveExpense = async () => {
+    const trimmed = expenseName.trim();
+    if (!trimmed) {
+      showToast('Nama pengeluaran tidak boleh kosong.');
+      return;
+    }
+    if (expenseAmount <= 0) {
+      showToast('Nominal pengeluaran harus lebih besar dari Rp 0.');
+      return;
+    }
+
+    const newExpense: ExpenseRecord = {
+      id: `exp-${Date.now()}`,
+      occurredAt: new Date().toISOString(),
+      description: trimmed,
+      amount: expenseAmount,
+      sourceMoney: 'STORE',
+    };
+
+    const nextPayload: TokoSakalaPayload = {
+      ...docPayload,
+      expenses: [newExpense, ...docPayload.expenses],
+    };
+
+    const ok = await executeSaveTransaction(nextPayload, 'Biaya operasional toko');
+    if (ok) {
+      setExpenseName('');
+      setExpenseAmount(0);
+      setCurrentScreen('beranda');
+    }
+  };
+
   const handleManualBackup = async () => {
     if (authState !== 'CONNECTED') {
       showToast('Hubungkan akun Google Drive terlebih dahulu.');
@@ -187,12 +640,16 @@ export default function App() {
 
   const handleRestoreBackup = async (backupId: string) => {
     try {
+      showToast('Memulihkan cadangan & mengamankan snapshot...');
       const res = await driveAdapter.restoreBackup(backupId);
       if (res.success) {
-        setDataVersion(res.restoredVersion);
+        // Finding 8: Muat ulang dokumen ke seluruh state aplikasi
+        const freshDoc = await driveAdapter.loadData();
+        setDocPayload(freshDoc.payload);
+        setDataVersion(freshDoc.dataVersion);
         setChecksumStatus('VALID');
         setShowRestoreModal(false);
-        showToast(`Data dipulihkan ke versi ${res.restoredVersion}. Snapshot keselamatan tersimpan.`);
+        showToast(`Data berhasil dipulihkan ke versi v${freshDoc.dataVersion}! Seluruh state aplikasi telah dimuat ulang.`);
       } else {
         showToast(`Pemulihan gagal: ${res.error}`);
       }
@@ -227,6 +684,58 @@ export default function App() {
   const toggleTheme = () => {
     setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
   };
+
+  const recentActivities = useMemo(() => {
+    const list: Array<{
+      id: string;
+      title: string;
+      subtitle: string;
+      amount: number;
+      time: string;
+      type: 'purchase' | 'expense' | 'deposit';
+      occurredAt: string;
+    }> = [];
+
+    docPayload.purchaseRecords.forEach(p => {
+      const prod = INITIAL_CATALOG.find(i => i.id === p.productId);
+      list.push({
+        id: p.id,
+        title: 'Belanja barang',
+        subtitle: prod ? `${prod.name} (${p.packs} kemasan)` : `${p.packs} kemasan`,
+        amount: p.totalCost,
+        time: new Date(p.occurredAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        type: 'purchase',
+        occurredAt: p.occurredAt,
+      });
+    });
+
+    docPayload.expenses.forEach(e => {
+      list.push({
+        id: e.id,
+        title: 'Biaya toko',
+        subtitle: e.description,
+        amount: e.amount,
+        time: new Date(e.occurredAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        type: 'expense',
+        occurredAt: e.occurredAt,
+      });
+    });
+
+    docPayload.deposits.forEach(d => {
+      list.push({
+        id: d.id,
+        title: 'Setoran karyawan',
+        subtitle: d.notes || 'Setoran kas toko',
+        amount: d.receivedAmount,
+        time: new Date(d.occurredAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        type: 'deposit',
+        occurredAt: d.occurredAt,
+      });
+    });
+
+    list.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+    return list;
+  }, [docPayload]);
 
   // Nav mapping
   const primaryTab: PrimaryTab = useMemo(() => {
@@ -319,18 +828,38 @@ export default function App() {
         </nav>
 
         <div className="rail-footer">
-          <strong>Backend Google Drive (Rp0)</strong>
-          <p style={{ marginTop: '2px', fontSize: '11px' }}>
-            {authState === 'CONNECTED'
-              ? `Tersambung: ${userInfo?.email || 'adizseptian@gmail.com'}`
-              : authState === 'UNCONFIGURED'
-              ? 'OAuth Client ID Belum Diatur'
-              : authState === 'CONNECTING'
-              ? 'Sedang Meminta Otorisasi...'
-              : 'Belum Terhubung'}
-          </p>
+          <strong>Penyimpanan Offline-First</strong>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+            <span style={{
+              display: 'inline-block',
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              background: syncStatus.lastError
+                ? 'var(--red)'
+                : syncStatus.isSyncing
+                ? 'var(--orange)'
+                : syncStatus.pendingCount > 0
+                ? '#b8860b'
+                : 'var(--green)'
+            }} />
+            <span style={{ fontSize: '11px', fontWeight: 800 }}>
+              {syncStatus.lastError
+                ? 'Gagal'
+                : syncStatus.isSyncing
+                ? 'Menyinkronkan...'
+                : syncStatus.pendingCount > 0
+                ? 'Menunggu sinkronisasi'
+                : supabaseAdapter.isConfigured()
+                ? 'Tersinkronisasi'
+                : 'Tersimpan (lokal)'}
+            </span>
+          </div>
           <span style={{ fontSize: '10px', color: 'var(--muted)', display: 'block', marginTop: '4px' }}>
-            Versi Data: v{dataVersion} • SHA-256 {checksumStatus}
+            Versi Data: {dataVersion === 0 ? '—' : `v${dataVersion}`} • SHA-256 {checksumStatus === 'VALID' ? 'Valid' : 'Belum Diperiksa'}
+          </span>
+          <span style={{ fontSize: '9px', color: 'var(--muted)', display: 'block', marginTop: '2px' }}>
+            ID: {deviceId.substring(0, 16)}
           </span>
         </div>
       </aside>
@@ -340,7 +869,34 @@ export default function App() {
         {/* Mobile Header (Only on Beranda) */}
         {currentScreen === 'beranda' && (
           <header className="mobile-head">
-            <div className="mobile-brand">TOKO SAKALA</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div className="mobile-brand">TOKO SAKALA</div>
+              <span
+                style={{
+                  fontSize: '9px',
+                  fontWeight: 800,
+                  padding: '2px 6px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--line)',
+                  background: syncStatus.lastError
+                    ? '#ffebe6'
+                    : syncStatus.pendingCount > 0
+                    ? 'var(--amber-pale)'
+                    : '#eafbe3',
+                  color: 'var(--ink)',
+                }}
+              >
+                {syncStatus.lastError
+                  ? 'Gagal'
+                  : syncStatus.isSyncing
+                  ? 'Sinkron...'
+                  : syncStatus.pendingCount > 0
+                  ? 'Menunggu'
+                  : supabaseAdapter.isConfigured()
+                  ? 'Tersinkron'
+                  : 'Tersimpan (lokal)'}
+              </span>
+            </div>
             <div className="mobile-head-actions">
               <button
                 type="button"
@@ -481,47 +1037,67 @@ export default function App() {
               </div>
 
               <div className="activity-feed">
-                <div className="feed-row">
-                  <div className="feed-icon green">
-                    <ShoppingCart size={18} />
-                  </div>
-                  <div className="feed-details">
-                    <strong className="feed-title">Belanja barang</strong>
-                    <span className="feed-subtitle">Indomie 5 dus, SGM 2 dus</span>
-                  </div>
-                  <div className="feed-meta">
-                    <span className="feed-time">08:45</span>
-                    <strong className="feed-amount">Rp 192.000</strong>
-                  </div>
-                </div>
+                {recentActivities.length > 0 ? (
+                  recentActivities.slice(0, 3).map((act) => (
+                    <div key={act.id} className="feed-row">
+                      <div className={`feed-icon ${act.type === 'purchase' ? 'green' : act.type === 'deposit' ? 'blue' : 'grey'}`}>
+                        {act.type === 'purchase' ? <ShoppingCart size={18} /> : act.type === 'deposit' ? <Wallet size={18} /> : <FileText size={18} />}
+                      </div>
+                      <div className="feed-details">
+                        <strong className="feed-title">{act.title}</strong>
+                        <span className="feed-subtitle">{act.subtitle}</span>
+                      </div>
+                      <div className="feed-meta">
+                        <span className="feed-time">{act.time}</span>
+                        <strong className="feed-amount">Rp {new Intl.NumberFormat('id-ID').format(act.amount)}</strong>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <>
+                    <div className="feed-row">
+                      <div className="feed-icon green">
+                        <ShoppingCart size={18} />
+                      </div>
+                      <div className="feed-details">
+                        <strong className="feed-title">Belanja barang</strong>
+                        <span className="feed-subtitle">Indomie 5 dus (Contoh panduan)</span>
+                      </div>
+                      <div className="feed-meta">
+                        <span className="feed-time">08:45</span>
+                        <strong className="feed-amount">Rp 192.000</strong>
+                      </div>
+                    </div>
 
-                <div className="feed-row">
-                  <div className="feed-icon grey">
-                    <FileText size={18} />
-                  </div>
-                  <div className="feed-details">
-                    <strong className="feed-title">Biaya toko</strong>
-                    <span className="feed-subtitle">Listrik</span>
-                  </div>
-                  <div className="feed-meta">
-                    <span className="feed-time">07:20</span>
-                    <strong className="feed-amount">Rp 150.000</strong>
-                  </div>
-                </div>
+                    <div className="feed-row">
+                      <div className="feed-icon grey">
+                        <FileText size={18} />
+                      </div>
+                      <div className="feed-details">
+                        <strong className="feed-title">Biaya toko</strong>
+                        <span className="feed-subtitle">Listrik (Contoh panduan)</span>
+                      </div>
+                      <div className="feed-meta">
+                        <span className="feed-time">07:20</span>
+                        <strong className="feed-amount">Rp 150.000</strong>
+                      </div>
+                    </div>
 
-                <div className="feed-row">
-                  <div className="feed-icon blue">
-                    <Wallet size={18} />
-                  </div>
-                  <div className="feed-details">
-                    <strong className="feed-title">Setoran karyawan</strong>
-                    <span className="feed-subtitle">Toko Nur</span>
-                  </div>
-                  <div className="feed-meta">
-                    <span className="feed-time">Kemarin</span>
-                    <strong className="feed-amount">Rp 1.250.000</strong>
-                  </div>
-                </div>
+                    <div className="feed-row">
+                      <div className="feed-icon blue">
+                        <Wallet size={18} />
+                      </div>
+                      <div className="feed-details">
+                        <strong className="feed-title">Setoran karyawan</strong>
+                        <span className="feed-subtitle">Toko Nur (Contoh panduan)</span>
+                      </div>
+                      <div className="feed-meta">
+                        <span className="feed-time">Kemarin</span>
+                        <strong className="feed-amount">Rp 1.250.000</strong>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -543,8 +1119,17 @@ export default function App() {
               <div className="step-circle">4</div>
             </div>
 
-            <div style={{ marginBottom: '12px' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: 900 }}>Pilih barang</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 900, margin: 0 }}>Pilih barang ({catalogList.length})</h2>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setShowAddProductModal(true)}
+                style={{ minHeight: '34px', fontSize: '11px', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Plus size={14} />
+                <span>Produk Baru</span>
+              </button>
             </div>
 
             {/* Search Bar with Filter Button */}
@@ -553,7 +1138,7 @@ export default function App() {
                 <Search className="search-icon" size={17} />
                 <input
                   type="text"
-                  placeholder="Cari barang..."
+                  placeholder="Cari barang di katalog..."
                   value={catatSearch}
                   onChange={(e) => setCatatSearch(e.target.value)}
                   aria-label="Cari barang belanja"
@@ -585,28 +1170,55 @@ export default function App() {
 
             {/* Product Selection List */}
             <div className="product-select-list">
-              {INITIAL_CATALOG.filter((p) => {
+              {catalogList.filter((p) => {
                 const matchCat = catatCategory === 'Semua' || p.category === catatCategory;
                 const matchQuery = p.name.toLowerCase().includes(catatSearch.toLowerCase());
                 return matchCat && matchQuery;
-              }).slice(0, 3).map((item) => (
-                <div key={item.id} className="product-select-card">
+              }).slice(0, 8).map((item) => (
+                <div
+                  key={item.id}
+                  className={`product-select-card ${selectedProduct.id === item.id ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedProduct(item);
+                    showToast(`Memilih ${item.name}`);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedProduct(item);
+                    }
+                  }}
+                  style={{
+                    cursor: 'pointer',
+                    outline: selectedProduct.id === item.id ? '2px solid var(--orange)' : undefined,
+                  }}
+                  aria-label={`Pilih ${item.name}`}
+                >
                   <div className="product-thumb-image" aria-hidden="true">
                     {item.icon}
                   </div>
                   <div className="product-info-text">
                     <strong className="product-info-name">{item.name}</strong>
                     <span className="product-info-meta">
-                      {item.category === 'Makanan' ? 'Mie instan' : item.category} · {item.unit}
+                      {item.category} · {item.unit}
                     </span>
-                    <strong className="product-info-price">
-                      Rp {new Intl.NumberFormat('id-ID').format(item.costPerPack)}
-                    </strong>
+                    {item.costPerPack !== null ? (
+                      <strong className="product-info-price">
+                        Rp {new Intl.NumberFormat('id-ID').format(item.costPerPack)}
+                      </strong>
+                    ) : (
+                      <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700, display: 'inline-block', width: 'fit-content' }}>
+                        Modal: Belum diketahui
+                      </span>
+                    )}
                   </div>
                   <button
                     type="button"
                     className="add-circle-btn"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setSelectedProduct(item);
                       showToast(`Memilih ${item.name}`);
                     }}
@@ -635,9 +1247,14 @@ export default function App() {
                 </div>
                 <div className="field-group">
                   <label htmlFor="p-unit" className="field-label">Satuan</label>
-                  <select id="p-unit" className="field-select" defaultValue="dus">
+                  <select
+                    id="p-unit"
+                    className="field-select"
+                    value={purchaseUnit}
+                    onChange={(e) => setPurchaseUnit(e.target.value)}
+                  >
                     <option value="dus">{selectedProduct.unit}</option>
-                    <option value="pak">Pak (10 pcs)</option>
+                    <option value="pak">Pak ({Math.max(1, Math.floor(selectedProduct.packSize / 4))} pcs)</option>
                     <option value="pcs">Pcs (satuan isi)</option>
                   </select>
                 </div>
@@ -645,26 +1262,60 @@ export default function App() {
 
               {/* Ringkasan Pembelian Box */}
               <div className="summary-box">
-                <div className="summary-box-title">Ringkasan pembelian</div>
+                <div className="summary-box-title">Ringkasan pembelian & dampak stok</div>
                 <div className="summary-box-row">
-                  <span>Total barang ({purchaseQty * selectedProduct.packSize} pcs)</span>
-                  <strong>Rp {new Intl.NumberFormat('id-ID').format(purchaseQty * selectedProduct.costPerPack)}</strong>
+                  <span>Konversi stok fisik masuk</span>
+                  <strong style={{ color: 'var(--green)' }}>+{purchaseQty * selectedProduct.packSize} pcs</strong>
                 </div>
-                <div className="summary-box-row" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
-                  <span style={{ fontWeight: 800, color: 'var(--ink)' }}>Total belanja</span>
-                  <strong style={{ fontSize: '15px' }}>
-                    Rp {new Intl.NumberFormat('id-ID').format(purchaseQty * selectedProduct.costPerPack)}
-                  </strong>
-                </div>
+
+                {selectedProduct.costPerPack !== null ? (
+                  <>
+                    <div className="summary-box-row">
+                      <span>Harga per kemasan</span>
+                      <span>Rp {new Intl.NumberFormat('id-ID').format(selectedProduct.costPerPack)}</span>
+                    </div>
+                    <div className="summary-box-row" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
+                      <span style={{ fontWeight: 800, color: 'var(--ink)' }}>Total belanja</span>
+                      <strong style={{ fontSize: '15px' }}>
+                        Rp {new Intl.NumberFormat('id-ID').format(purchaseQty * selectedProduct.costPerPack)}
+                      </strong>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 800 }}>Nominal Belanja Nota (Rp):</span>
+                      <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                        Modal belum diisi di katalog
+                      </span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      className="field-input"
+                      placeholder="Masukkan total belanja nota riil..."
+                      value={customPurchaseCost}
+                      onChange={(e) => setCustomPurchaseCost(e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box', marginBottom: '6px' }}
+                    />
+                    <div className="summary-box-row">
+                      <span style={{ fontWeight: 800, color: 'var(--ink)' }}>Total belanja nota</span>
+                      <strong style={{ fontSize: '15px' }}>
+                        Rp {new Intl.NumberFormat('id-ID').format(Number(customPurchaseCost) || 0)}
+                      </strong>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* CTA: Lanjut ke pratinjau */}
+              {/* CTA: Simpan Pembelian ke Penyimpanan */}
               <button
                 type="button"
                 className="btn btn-primary"
-                onClick={() => showToast('Pratinjau dihitung: Rp ' + new Intl.NumberFormat('id-ID').format(purchaseQty * selectedProduct.costPerPack) + '. Belum disimpan.')}
+                onClick={handleSavePurchase}
               >
-                Lanjut ke pratinjau →
+                Simpan Pembelian Belanja (+{purchaseQty * selectedProduct.packSize} pcs) →
               </button>
             </div>
           </div>
@@ -705,15 +1356,10 @@ export default function App() {
 
             {/* Stock List with Steppers */}
             <div className="stock-check-list">
-              {[
-                { id: 'indomie', name: 'Indomie Goreng', unit: 'Dus (40 pcs)', icon: '🍜' },
-                { id: 'aqua', name: 'Aqua 600ml', unit: 'Dus (24 botol)', icon: '💧' },
-                { id: 'telur', name: 'Telur Ayam Negeri', unit: 'Kg', icon: '🥚' },
-                { id: 'gula', name: 'Gula Pasir', unit: 'Kg', icon: '🍚' },
-                { id: 'chocopie', name: 'ChocoPie', unit: 'Pcs', icon: '🍪' },
-                { id: 'sampoerna', name: 'Rokok Sampoerna', unit: 'Slop (10 bks)', icon: '🚬' },
-              ].filter((item) => {
-                return item.name.toLowerCase().includes(stokSearch.toLowerCase());
+              {catalogList.filter((item) => {
+                const matchCat = stokCategory === 'Semua' || item.category === stokCategory;
+                const matchSearch = item.name.toLowerCase().includes(stokSearch.toLowerCase());
+                return matchCat && matchSearch;
               }).map((item) => {
                 const count = stockCounts[item.id];
                 const isFilled = count !== null && count !== undefined;
@@ -806,7 +1452,7 @@ export default function App() {
                 type="button"
                 className="btn btn-dark"
                 style={{ minHeight: '44px', padding: '0 24px' }}
-                onClick={() => showToast('Perubahan dicatat dalam pratinjau. Database belum aktif.')}
+                onClick={handleSaveStockCheck}
               >
                 Simpan
               </button>
@@ -823,21 +1469,13 @@ export default function App() {
             <div
               className="date-selector-row"
               onClick={() => {
-                const todayFormatted = new Intl.DateTimeFormat('id-ID', {
-                  weekday: 'long',
-                  day: 'numeric',
-                  month: 'short',
-                  year: 'numeric',
-                }).format(new Date());
-                const choice = prompt(`Pilih tanggal setoran:\n1. Mockup: Rabu, 28 Okt 2025\n2. Hari ini: ${todayFormatted}`, depositDate);
-                if (choice && choice.trim()) {
-                  setDepositDate(choice.trim());
-                  showToast(`Tanggal setoran: ${choice.trim()}`);
-                }
+                setCustomDateInput(new Date().toISOString().split('T')[0]);
+                setShowDateModal(true);
               }}
               role="button"
               tabIndex={0}
               aria-label="Pilih tanggal setoran"
+              style={{ cursor: 'pointer' }}
             >
               <div className="date-selector-left">
                 <Calendar size={18} />
@@ -857,9 +1495,10 @@ export default function App() {
               {/* Card 1: Uang yang seharusnya diserahkan */}
               <div
                 className="settlement-card"
-                onClick={() => showToast('Dihitung dari transaksi hari ini.')}
+                onClick={() => showToast('Estimasi dihitung dari transaksi penjualan periode aktif toko.')}
                 role="button"
                 tabIndex={0}
+                style={{ cursor: 'pointer' }}
               >
                 <div className="settlement-icon-box">
                   <FileText size={20} />
@@ -879,13 +1518,12 @@ export default function App() {
               <div
                 className="settlement-card"
                 onClick={() => {
-                  const val = prompt('Ubah nominal yang diterima:', receivedAmount.toString());
-                  if (val !== null && !isNaN(Number(val))) {
-                    setReceivedAmount(Number(val));
-                  }
+                  setCustomAmountInput(receivedAmount.toString());
+                  setShowAmountModal(true);
                 }}
                 role="button"
                 tabIndex={0}
+                style={{ cursor: 'pointer' }}
               >
                 <div className="settlement-icon-box">
                   <Wallet size={20} />
@@ -902,7 +1540,13 @@ export default function App() {
               </div>
 
               {/* Card 3: Selisih (perlu diperiksa) */}
-              <div className="settlement-card red">
+              <div
+                className="settlement-card red"
+                onClick={() => setShowDiscrepancyModal(true)}
+                role="button"
+                tabIndex={0}
+                style={{ cursor: 'pointer' }}
+              >
                 <div className="settlement-icon-box">
                   <AlertCircle size={20} />
                 </div>
@@ -942,7 +1586,7 @@ export default function App() {
               type="button"
               className="btn btn-dark"
               style={{ width: '100%' }}
-              onClick={() => showToast('Simpan setoran (mode demo pratinjau — transaksi belum ditulis ke server).')}
+              onClick={handleSaveDeposit}
             >
               Simpan setoran
             </button>
@@ -960,16 +1604,31 @@ export default function App() {
             </p>
             <div className="field-group" style={{ marginBottom: '12px' }}>
               <label htmlFor="b-name" className="field-label">Nama Pengeluaran</label>
-              <input id="b-name" type="text" className="field-input" placeholder="Contoh: Beli plastik & sedotan" />
+              <input
+                id="b-name"
+                type="text"
+                className="field-input"
+                placeholder="Contoh: Beli plastik & sedotan"
+                value={expenseName}
+                onChange={(e) => setExpenseName(e.target.value)}
+              />
             </div>
             <div className="field-group" style={{ marginBottom: '14px' }}>
               <label htmlFor="b-cost" className="field-label">Nominal (Rp)</label>
-              <input id="b-cost" type="number" className="field-input" placeholder="Contoh: 25000" />
+              <input
+                id="b-cost"
+                type="number"
+                min="0"
+                className="field-input"
+                placeholder="Contoh: 25000"
+                value={expenseAmount || ''}
+                onChange={(e) => setExpenseAmount(Math.max(0, Number(e.target.value) || 0))}
+              />
             </div>
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => showToast('Pratinjau pengeluaran dicatat.')}
+              onClick={handleSaveExpense}
             >
               Simpan Biaya
             </button>
@@ -979,71 +1638,111 @@ export default function App() {
         {/* ======================================================== */}
         {/* SECONDARY SCREEN: LAPORAN                                */}
         {/* ======================================================== */}
-        {currentScreen === 'laporan' && (
-          <div>
-            <div className="form-card" style={{ marginBottom: '16px' }}>
-              <h3 className="form-card-title">Ringkasan Laporan Hari Ini</h3>
-              <div className="summary-box-row" style={{ marginTop: '10px' }}>
-                <span>Estimasi Penjualan</span>
-                <strong>Rp 2.450.000</strong>
+        {currentScreen === 'laporan' && (() => {
+          const totalPurchases = docPayload.purchaseRecords.reduce((sum, p) => sum + p.totalCost, 0);
+          const totalExpenses = docPayload.expenses.reduce((sum, e) => sum + e.amount, 0);
+          const totalDeposits = docPayload.deposits.reduce((sum, d) => sum + d.receivedAmount, 0);
+          const totalDiscrepancy = docPayload.deposits.reduce((sum, d) => sum + d.discrepancy, 0);
+          const totalSalesEstimate = docPayload.salesRecords.reduce((sum, s) => sum + s.totalSalesValue, 0);
+          const netCashFlow = totalDeposits - totalExpenses - totalPurchases;
+
+          return (
+            <div>
+              <div className="form-card" style={{ marginBottom: '16px' }}>
+                <h3 className="form-card-title">Ringkasan Laporan Aktual</h3>
+                <div className="summary-box-row" style={{ marginTop: '10px' }}>
+                  <span>Total Belanja Barang ({docPayload.purchaseRecords.length} transaksi)</span>
+                  <strong>Rp {new Intl.NumberFormat('id-ID').format(totalPurchases)}</strong>
+                </div>
+                <div className="summary-box-row">
+                  <span>Total Biaya Operasional ({docPayload.expenses.length} transaksi)</span>
+                  <strong>Rp {new Intl.NumberFormat('id-ID').format(totalExpenses)}</strong>
+                </div>
+                <div className="summary-box-row">
+                  <span>Total Setoran Diterima ({docPayload.deposits.length} transaksi)</span>
+                  <strong>Rp {new Intl.NumberFormat('id-ID').format(totalDeposits)}</strong>
+                </div>
+                {totalSalesEstimate > 0 && (
+                  <div className="summary-box-row">
+                    <span>Estimasi Penjualan Tercatat</span>
+                    <strong>Rp {new Intl.NumberFormat('id-ID').format(totalSalesEstimate)}</strong>
+                  </div>
+                )}
+                {docPayload.deposits.length > 0 && (
+                  <div className="summary-box-row">
+                    <span>Akumulasi Selisih Setoran</span>
+                    <strong style={{ color: totalDiscrepancy < 0 ? 'var(--red)' : totalDiscrepancy > 0 ? 'var(--blue)' : 'var(--green)' }}>
+                      {totalDiscrepancy < 0
+                        ? `Kurang Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(totalDiscrepancy))}`
+                        : totalDiscrepancy > 0
+                        ? `Lebih Rp ${new Intl.NumberFormat('id-ID').format(totalDiscrepancy)}`
+                        : 'Rp 0 (Pas)'}
+                    </strong>
+                  </div>
+                )}
+                <div className="summary-box-row" style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed var(--line)' }}>
+                  <span style={{ fontWeight: 800 }}>Arus Kas Bersih Tercatat</span>
+                  <strong style={{ color: netCashFlow >= 0 ? 'var(--green)' : 'var(--red)', fontSize: '15px' }}>
+                    {netCashFlow >= 0
+                      ? `+Rp ${new Intl.NumberFormat('id-ID').format(netCashFlow)}`
+                      : `-Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(netCashFlow))}`}
+                  </strong>
+                </div>
               </div>
-              <div className="summary-box-row">
-                <span>Modal Barang Terjual</span>
-                <strong>Rp 1.280.000</strong>
-              </div>
-              <div className="summary-box-row">
-                <span>Biaya Toko</span>
-                <strong>Rp 350.000</strong>
-              </div>
-              <div className="summary-box-row" style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed var(--line)' }}>
-                <span style={{ fontWeight: 800 }}>Estimasi Keuntungan Bersih</span>
-                <strong style={{ color: 'var(--green)', fontSize: '15px' }}>Rp 820.000</strong>
+              <div style={{ padding: '12px', background: 'var(--paper)', borderRadius: '10px', border: '1px solid var(--line)', fontSize: '11px', color: 'var(--muted)' }}>
+                <strong>Prinsip Integritas Keuangan:</strong>
+                <p style={{ marginTop: '4px' }}>
+                  Nilai penjualan, modal, biaya toko, dan setoran karyawan dipisahkan secara tegas. Angka di atas dihitung langsung dari transaksi dokumen toko (v{dataVersion}).
+                </p>
               </div>
             </div>
-            <p style={{ fontSize: '11px', color: 'var(--muted)', textAlign: 'center' }}>
-              Catatan: Keuntungan bersih hanya dihitung dari barang yang modalnya diketahui.
-            </p>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ======================================================== */}
         {/* SECONDARY SCREEN: RIWAYAT                                */}
         {/* ======================================================== */}
         {currentScreen === 'riwayat' && (
-          <div className="activity-feed">
-            <div className="feed-row">
-              <div className="feed-icon green"><ShoppingCart size={18} /></div>
-              <div className="feed-details">
-                <strong className="feed-title">Belanja barang</strong>
-                <span className="feed-subtitle">Indomie 5 dus, SGM 2 dus</span>
-              </div>
-              <div className="feed-meta">
-                <span className="feed-time">08:45</span>
-                <strong className="feed-amount">Rp 192.000</strong>
-              </div>
+          <div>
+            <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 900, margin: 0 }}>Riwayat Transaksi</h2>
+              <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{recentActivities.length} transaksi terekam</span>
             </div>
-            <div className="feed-row">
-              <div className="feed-icon grey"><FileText size={18} /></div>
-              <div className="feed-details">
-                <strong className="feed-title">Biaya toko</strong>
-                <span className="feed-subtitle">Listrik toko</span>
+
+            {recentActivities.length > 0 ? (
+              <div className="activity-feed">
+                {recentActivities.map((act) => (
+                  <div key={act.id} className="feed-row">
+                    <div className={`feed-icon ${act.type === 'purchase' ? 'green' : act.type === 'deposit' ? 'blue' : 'grey'}`}>
+                      {act.type === 'purchase' ? <ShoppingCart size={18} /> : act.type === 'deposit' ? <Wallet size={18} /> : <FileText size={18} />}
+                    </div>
+                    <div className="feed-details">
+                      <strong className="feed-title">{act.title}</strong>
+                      <span className="feed-subtitle">{act.subtitle}</span>
+                    </div>
+                    <div className="feed-meta">
+                      <span className="feed-time">{act.time}</span>
+                      <strong className="feed-amount">Rp {new Intl.NumberFormat('id-ID').format(act.amount)}</strong>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="feed-meta">
-                <span className="feed-time">07:20</span>
-                <strong className="feed-amount">Rp 150.000</strong>
+            ) : (
+              <div className="form-card" style={{ textAlign: 'center', padding: '30px 16px' }}>
+                <p style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 6px 0' }}>Belum ada transaksi terekam</p>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '0 0 16px 0' }}>
+                  Catat belanja, periksa stok, simpan setoran, atau catat pengeluaran toko untuk melihat riwayat aktivitas di sini.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setCurrentScreen('catat')}
+                  style={{ display: 'inline-flex', width: 'auto', margin: '0 auto' }}
+                >
+                  Mulai Catat Belanja →
+                </button>
               </div>
-            </div>
-            <div className="feed-row">
-              <div className="feed-icon blue"><Wallet size={18} /></div>
-              <div className="feed-details">
-                <strong className="feed-title">Setoran karyawan</strong>
-                <span className="feed-subtitle">Toko Nur</span>
-              </div>
-              <div className="feed-meta">
-                <span className="feed-time">Kemarin</span>
-                <strong className="feed-amount">Rp 1.250.000</strong>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1096,6 +1795,20 @@ export default function App() {
 
             <div
               className="product-select-card"
+              onClick={() => setCurrentScreen('barang')}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="tile-icon-box dark"><Package size={18} /></div>
+              <div className="product-info-text">
+                <strong className="product-info-name">Katalog Produk</strong>
+                <span className="product-info-meta">Daftar produk, satuan kemasan, dan modal</span>
+              </div>
+              <ChevronRight size={18} />
+            </div>
+
+            <div
+              className="product-select-card"
               onClick={() => setCurrentScreen('pengaturan')}
               role="button"
               tabIndex={0}
@@ -1110,8 +1823,252 @@ export default function App() {
           </div>
         )}
 
+        {/* ======================================================== */}
+        {/* SECONDARY SCREEN: KATALOG PRODUK                         */}
+        {/* ======================================================== */}
+        {currentScreen === 'barang' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-paper"
+                  onClick={() => setCurrentScreen('lainnya')}
+                  style={{ minHeight: '36px', minWidth: '36px', padding: '4px 8px' }}
+                  aria-label="Kembali ke menu Lainnya"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+                <h2 style={{ fontSize: '16px', fontWeight: 900, margin: 0 }}>Katalog Produk ({catalogList.length})</h2>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setShowAddProductModal(true)}
+                style={{ minHeight: '36px', fontSize: '11px', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Plus size={14} />
+                <span>+ Produk Baru</span>
+              </button>
+            </div>
+
+            <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '0 0 14px 0' }}>
+              Daftar master produk toko. Mendaftarkan produk baru tidak otomatis menambah stok maupun mencatat belanja.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {catalogList.map((prod) => (
+                <div key={prod.id} className="product-select-card" style={{ cursor: 'default' }}>
+                  <div className="product-thumb-image" aria-hidden="true">
+                    {prod.icon}
+                  </div>
+                  <div className="product-info-text">
+                    <strong className="product-info-name">{prod.name}</strong>
+                    <span className="product-info-meta">
+                      {prod.category} · Kemasan: {prod.unit} ({prod.packSize} pcs)
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '3px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ink)' }}>
+                        Jual: Rp {new Intl.NumberFormat('id-ID').format(prod.sellingPricePerUnit)}/pcs
+                      </span>
+                      {prod.costPerPack !== null && prod.costPerPack !== undefined ? (
+                        <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                          • Modal: Rp {new Intl.NumberFormat('id-ID').format(prod.costPerPack)}/{prod.unit.split(' ')[0]}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                          Modal: Belum diketahui
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {currentScreen === 'pengaturan' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Kartu 1: Penyimpanan Lokal Offline-First (IndexedDB) */}
+            <div className="form-card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Database size={20} color="var(--orange)" />
+                  <h3 className="form-card-title" style={{ margin: 0 }}>Penyimpanan Lokal Offline-First</h3>
+                </div>
+                <span className="status-tag good">IndexedDB Aktif</span>
+              </div>
+
+              <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '0 0 12px 0' }}>
+                Data toko Anda disimpan langsung di browser perangkat ini secara instan dan dapat digunakan 100% tanpa jaringan internet.
+              </p>
+
+              <div className="summary-box-row">
+                <span>Versi Dokumen Lokal</span>
+                <strong>{dataVersion === 0 ? 'Belum dimuat' : `v${dataVersion}`}</strong>
+              </div>
+
+              <div className="summary-box-row">
+                <span>Keutuhan Integritas</span>
+                <span style={{
+                  fontWeight: 800,
+                  color: checksumStatus === 'VALID' ? 'var(--green)' : 'var(--muted)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  <ShieldCheck size={14} />
+                  {checksumStatus === 'VALID' ? 'SHA-256 Valid' : 'Belum diperiksa'}
+                </span>
+              </div>
+
+              <div className="summary-box-row">
+                <span>Status Jaringan Perangkat</span>
+                <strong style={{ color: syncStatus.isOnline ? 'var(--green)' : 'var(--muted)' }}>
+                  {syncStatus.isOnline ? 'Online (Terhubung)' : 'Offline (Luar Jaringan)'}
+                </strong>
+              </div>
+
+              <div className="summary-box-row">
+                <span>Antrean Mutasi Belum Tersinkron</span>
+                <strong style={{ color: syncStatus.pendingCount > 0 ? 'var(--orange)' : 'var(--ink)' }}>
+                  {syncStatus.pendingCount} perubahan tertunda
+                </strong>
+              </div>
+
+              {/* Action Buttons: Ekspor & Impor File JSON */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleExportJson}
+                  style={{ minHeight: '44px', fontSize: '12px' }}
+                >
+                  <Download size={15} />
+                  <span>Unduh JSON</span>
+                </button>
+
+                <label
+                  className="btn btn-paper"
+                  style={{
+                    minHeight: '44px',
+                    fontSize: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    gap: '6px'
+                  }}
+                >
+                  <Upload size={15} />
+                  <span>Pulihkan JSON</span>
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleImportJsonFile}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Kartu 2: Sinkronisasi Cloud Supabase (PostgreSQL Rp0) */}
+            <div className="form-card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Server size={20} color="var(--blue)" />
+                  <h3 className="form-card-title" style={{ margin: 0 }}>Sinkronisasi Cloud Supabase</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSupabaseModal(true)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--muted)',
+                    fontSize: '11px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    cursor: 'pointer',
+                    padding: '4px 6px',
+                  }}
+                  title="Atur Kredensial Supabase"
+                  aria-label="Atur Kredensial Supabase"
+                >
+                  <KeyRound size={14} />
+                  <span>Atur Supabase</span>
+                </button>
+              </div>
+
+              <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '0 0 12px 0' }}>
+                Sinkronisasi otomatis antar-perangkat menggunakan basis data cloud PostgreSQL gratis (Supabase Free Tier Rp0).
+              </p>
+
+              <div className="summary-box-row">
+                <span>Status Basis Data</span>
+                <span style={{
+                  fontWeight: 800,
+                  color: supabaseAdapter.isConfigured() ? 'var(--green)' : 'var(--muted)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px'
+                }}>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: supabaseAdapter.isConfigured() ? 'var(--green)' : '#999'
+                  }} />
+                  {supabaseAdapter.isConfigured() ? 'Terkonfigurasi' : 'Belum Dikonfigurasi'}
+                </span>
+              </div>
+
+              <div className="summary-box-row">
+                <span>URL Proyek</span>
+                <strong style={{ fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
+                  {supabaseAdapter.isConfigured() ? supabaseAdapter.getCredentials().url : '—'}
+                </strong>
+              </div>
+
+              <div className="summary-box-row">
+                <span>Sinkronisasi Terakhir</span>
+                <strong style={{ fontSize: '12px' }}>
+                  {syncStatus.lastSyncedAt ? new Date(syncStatus.lastSyncedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB' : 'Belum tersinkron'}
+                </strong>
+              </div>
+
+              {syncStatus.lastError && (
+                <div style={{ marginTop: '8px', padding: '8px 10px', background: '#ffebe6', border: '1px solid #ff8f73', borderRadius: '6px', fontSize: '11px', color: '#900' }}>
+                  <strong>Catatan Sinkronisasi:</strong> {syncStatus.lastError}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSyncCloudNow}
+                  disabled={syncStatus.isSyncing}
+                  style={{ minHeight: '44px', fontSize: '12px' }}
+                >
+                  <RefreshCw size={15} className={syncStatus.isSyncing ? 'spin' : ''} />
+                  <span>{syncStatus.isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-paper"
+                  onClick={() => setShowSupabaseModal(true)}
+                  style={{ minHeight: '44px', fontSize: '12px' }}
+                >
+                  <KeyRound size={15} />
+                  <span>Kredensial Cloud</span>
+                </button>
+              </div>
+            </div>
+
             {/* Google Drive Backend Storage Card */}
             <div className="form-card">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
@@ -1146,7 +2103,7 @@ export default function App() {
                 <div style={{ padding: '10px 12px', background: 'var(--amber-pale)', border: '1px solid #e2bc74', borderRadius: '8px', fontSize: '11px', color: 'var(--ink)', marginBottom: '12px' }}>
                   <strong>Client ID Diperlukan:</strong>
                   <p style={{ marginTop: '2px', color: 'var(--muted)' }}>
-                    Masukkan Google OAuth 2.0 Web Client ID Anda untuk mengotorisasi akses Google Drive akun <strong>adizseptian@gmail.com</strong> tanpa backend berbayar (Rp0).
+                    Masukkan Google OAuth 2.0 Web Client ID Anda untuk mengotorisasi akses Google Drive tanpa backend berbayar (Rp0).
                   </p>
                   <button
                     type="button"
@@ -1177,8 +2134,8 @@ export default function App() {
               )}
 
               <div className="summary-box-row" style={{ marginTop: '4px' }}>
-                <span>Akun Google Pemilik</span>
-                <strong>{userInfo?.email || 'adizseptian@gmail.com'}</strong>
+                <span>Akun Google Terhubung</span>
+                <strong>{userInfo?.email || (authState === 'CONNECTED' ? 'Google Drive Aktif' : 'Belum terhubung')}</strong>
               </div>
 
               <div className="summary-box-row">
@@ -1210,15 +2167,21 @@ export default function App() {
 
               <div className="summary-box-row">
                 <span>Keutuhan Data</span>
-                <span style={{ fontWeight: 800, color: checksumStatus === 'VALID' ? 'var(--green)' : 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{
+                  fontWeight: 800,
+                  color: checksumStatus === 'VALID' ? 'var(--green)' : checksumStatus === 'UNCHECKED' ? 'var(--muted)' : 'var(--red)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
                   <ShieldCheck size={14} />
-                  {checksumStatus === 'VALID' ? 'SHA-256 Valid' : 'Peringatan Korup'}
+                  {checksumStatus === 'VALID' ? 'SHA-256 Valid' : checksumStatus === 'UNCHECKED' ? 'Belum diperiksa' : 'Peringatan Korup'}
                 </span>
               </div>
 
               <div className="summary-box-row">
                 <span>Versi Dokumen</span>
-                <strong>v{dataVersion}</strong>
+                <strong>{dataVersion === 0 ? 'Belum dimuat' : `v${dataVersion}`}</strong>
               </div>
 
               <div className="summary-box-row">
@@ -1522,9 +2485,775 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* Modal Dialog: Konfigurasi Supabase Cloud */}
+            {showSupabaseModal && (
+              <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="supabase-modal-title" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+                <div className="form-card" style={{ maxWidth: '440px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Server size={20} color="var(--blue)" />
+                      <h3 id="supabase-modal-title" className="form-card-title" style={{ margin: 0 }}>Konfigurasi Supabase Cloud</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSupabaseModal(false)}
+                      style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                      aria-label="Tutup dialog Supabase"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '14px', lineHeight: '1.4' }}>
+                    Gunakan tier gratis Supabase (PostgreSQL Rp0) untuk sinkronisasi data antar-perangkat secara otomatis. Data tetap tersimpan secara aman di browser (Offline-First) dan diselaraskan ke basis data cloud Anda.
+                  </p>
+
+                  <div style={{ marginBottom: '12px' }}>
+                    <label htmlFor="cfg-sb-url" style={{ display: 'block', fontSize: '11px', fontWeight: 800, marginBottom: '4px' }}>
+                      1. Project URL Supabase:
+                    </label>
+                    <input
+                      id="cfg-sb-url"
+                      type="url"
+                      className="field-input"
+                      placeholder="https://xyzcompany.supabase.co"
+                      value={supabaseUrlInput}
+                      onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                      style={{ fontSize: '12px', width: '100%', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '14px' }}>
+                    <label htmlFor="cfg-sb-key" style={{ display: 'block', fontSize: '11px', fontWeight: 800, marginBottom: '4px' }}>
+                      2. Public Anon Key:
+                    </label>
+                    <input
+                      id="cfg-sb-key"
+                      type="text"
+                      className="field-input"
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      value={supabaseKeyInput}
+                      onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                      style={{ fontSize: '12px', width: '100%', boxSizing: 'border-box' }}
+                    />
+                    <span style={{ fontSize: '10px', color: 'var(--muted)', display: 'block', marginTop: '4px' }}>
+                      Kunci publik anon aman digunakan di sisi peramban dengan Row Level Security.
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleSaveSupabaseConfig}
+                      style={{ minHeight: '44px', width: '100%' }}
+                    >
+                      Simpan Kredensial Supabase
+                    </button>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={handleResetSupabaseConfig}
+                        style={{ minHeight: '40px', fontSize: '11px' }}
+                      >
+                        Hapus / Reset
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={() => setShowSupabaseModal(false)}
+                        style={{ minHeight: '40px', fontSize: '11px' }}
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '14px', padding: '10px 12px', background: 'var(--paper)', borderRadius: '8px', border: '1px solid var(--line)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--ink)' }}>
+                        Otorisasi Pemilik (Supabase Auth):
+                      </span>
+                      {supabaseUser ? (
+                        <span style={{ fontSize: '10px', background: '#eafbe7', color: '#1a7f37', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                          ✓ Aktif
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '10px', color: 'var(--muted)' }}>
+                          Sesi Kunci Anon
+                        </span>
+                      )}
+                    </div>
+                    {supabaseUser ? (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--ink)', fontWeight: 700 }}>{supabaseUser.email}</span>
+                        <button
+                          type="button"
+                          className="btn btn-paper"
+                          onClick={handleSignOutSupabase}
+                          style={{ minHeight: '32px', fontSize: '10px', padding: '2px 8px' }}
+                        >
+                          Keluar
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <p style={{ fontSize: '10px', color: 'var(--muted)', margin: '0 0 8px 0', lineHeight: '1.4' }}>
+                          Kirim tautan masuk Magic Link (tanpa sandi) ke akun <strong>adizseptian@gmail.com</strong> untuk sinkronisasi terotorisasi RLS.
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-paper"
+                          disabled={isSendingOtp}
+                          onClick={handleSendMagicLink}
+                          style={{ minHeight: '36px', fontSize: '11px', width: '100%', padding: '4px 8px' }}
+                        >
+                          {isSendingOtp ? 'Mengirim...' : '✉️ Kirim Magic Link Masuk ke adizseptian@gmail.com'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px dashed var(--line)' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--ink)', display: 'block', marginBottom: '6px' }}>
+                      Skrip SQL Migrasi Database Supabase:
+                    </span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '6px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={() => {
+                          const sql001 = `-- TOKO SAKALA: Skrip Migrasi 001 (Tabel Dokumen & Cadangan)
+CREATE TABLE IF NOT EXISTS public.toko_documents (
+  id text PRIMARY KEY,
+  data_version bigint NOT NULL DEFAULT 1,
+  checksum text NOT NULL,
+  content jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.toko_documents ADD COLUMN IF NOT EXISTS data_version bigint DEFAULT 1;
+ALTER TABLE public.toko_documents ADD COLUMN IF NOT EXISTS version bigint DEFAULT 1;
+
+CREATE TABLE IF NOT EXISTS public.toko_backups (
+  id text PRIMARY KEY,
+  file_name text NOT NULL,
+  data_version bigint NOT NULL DEFAULT 1,
+  version bigint NOT NULL DEFAULT 1,
+  checksum text NOT NULL,
+  content text NOT NULL,
+  label text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.toko_backups ADD COLUMN IF NOT EXISTS data_version bigint DEFAULT 1;
+ALTER TABLE public.toko_backups ADD COLUMN IF NOT EXISTS version bigint DEFAULT 1;
+
+ALTER TABLE public.toko_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.toko_backups ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow owner read and write toko_documents" ON public.toko_documents;
+CREATE POLICY "Allow owner read and write toko_documents" ON public.toko_documents FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow owner read and write toko_backups" ON public.toko_backups;
+CREATE POLICY "Allow owner read and write toko_backups" ON public.toko_backups FOR ALL USING (true) WITH CHECK (true);
+
+GRANT ALL ON TABLE public.toko_documents TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.toko_backups TO anon, authenticated, service_role;
+NOTIFY pgrst, 'reload schema';`;
+                          navigator.clipboard.writeText(sql001);
+                          showToast('Skrip Migrasi 001 (toko_documents) berhasil disalin!');
+                        }}
+                        style={{ minHeight: '36px', fontSize: '10px', padding: '4px 6px' }}
+                      >
+                        📋 Salin SQL 001 (Dokumen)
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-paper"
+                        onClick={() => {
+                          const sql002 = `-- TOKO SAKALA: Skrip Migrasi 002 (Tabel Domain: Produk, Stok, Belanja, Penjualan, Biaya, Setoran, Sync)
+CREATE TABLE IF NOT EXISTS public.products (
+  product_id text PRIMARY KEY,
+  name text NOT NULL,
+  category text NOT NULL DEFAULT 'Makanan',
+  unit text NOT NULL DEFAULT 'pcs',
+  pack_size integer NOT NULL DEFAULT 1,
+  cost_per_pack numeric NOT NULL DEFAULT 0,
+  selling_price_per_unit numeric NOT NULL DEFAULT 0,
+  icon text DEFAULT '📦',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.stock_movements (
+  id text PRIMARY KEY,
+  product_id text REFERENCES public.products(product_id) ON DELETE CASCADE,
+  change integer NOT NULL,
+  unit text NOT NULL DEFAULT 'pcs',
+  movement_type text NOT NULL DEFAULT 'MANUAL',
+  note text,
+  user_id uuid REFERENCES auth.users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.purchases (
+  id text PRIMARY KEY,
+  product_id text REFERENCES public.products(product_id) ON DELETE CASCADE,
+  quantity integer NOT NULL,
+  units_per_pack integer NOT NULL DEFAULT 1,
+  total numeric NOT NULL,
+  source_money text NOT NULL DEFAULT 'STORE',
+  user_id uuid REFERENCES auth.users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.sales (
+  id text PRIMARY KEY,
+  product_id text REFERENCES public.products(product_id) ON DELETE CASCADE,
+  quantity integer NOT NULL,
+  unit_price numeric NOT NULL,
+  total numeric NOT NULL,
+  source_payment text NOT NULL DEFAULT 'CASH',
+  user_id uuid REFERENCES auth.users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id text PRIMARY KEY,
+  description text NOT NULL,
+  amount numeric NOT NULL,
+  source_money text NOT NULL DEFAULT 'STORE',
+  user_id uuid REFERENCES auth.users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.deposits (
+  id text PRIMARY KEY,
+  expected_amount numeric NOT NULL,
+  received_amount numeric NOT NULL,
+  discrepancy numeric NOT NULL DEFAULT 0,
+  note text,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  user_id uuid REFERENCES auth.users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.periods (
+  id text PRIMARY KEY,
+  start_date date NOT NULL,
+  end_date date,
+  is_closed boolean NOT NULL DEFAULT false,
+  closed_at timestamptz,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.sync_events (
+  id text PRIMARY KEY,
+  item_type text NOT NULL,
+  item_id text NOT NULL,
+  action text NOT NULL,
+  idempotency_key text UNIQUE,
+  device_id text,
+  synced boolean NOT NULL DEFAULT true,
+  user_id uuid REFERENCES auth.users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.backup_registry (
+  id text PRIMARY KEY,
+  file_name text NOT NULL,
+  data_version integer NOT NULL DEFAULT 1,
+  byte_size bigint NOT NULL DEFAULT 0,
+  checksum text NOT NULL,
+  description text,
+  storage_path text,
+  user_id uuid REFERENCES auth.users(id),
+  backup_time timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.purchases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sales ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.deposits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.periods ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sync_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.backup_registry ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Products access" ON public.products FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Stock movements access" ON public.stock_movements FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Purchases access" ON public.purchases FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Sales access" ON public.sales FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Expenses access" ON public.expenses FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Deposits access" ON public.deposits FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Periods access" ON public.periods FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Sync events access" ON public.sync_events FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Backup registry access" ON public.backup_registry FOR ALL USING (true) WITH CHECK (true);
+
+GRANT ALL ON TABLE public.products TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.stock_movements TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.purchases TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.sales TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.expenses TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.deposits TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.periods TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.sync_events TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.backup_registry TO anon, authenticated, service_role;
+
+NOTIFY pgrst, 'reload schema';`;
+                          navigator.clipboard.writeText(sql002);
+                          showToast('Skrip Migrasi 002 (Domain Tables) berhasil disalin!');
+                        }}
+                        style={{ minHeight: '36px', fontSize: '10px', padding: '4px 6px' }}
+                      >
+                        📋 Salin SQL 002 (Domain)
+                      </button>
+                    </div>
+                    <p style={{ fontSize: '10px', color: 'var(--muted)', margin: 0, lineHeight: '1.4' }}>
+                      Jalankan skrip di atas (klik Run) di menu <strong>SQL Editor</strong> dashboard Supabase Anda (<code>dvznpniodskujfbdznnv.supabase.co</code>) untuk mengaktifkan seluruh tabel dan RLS.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
+
+      {/* Modal Dialog: Pilih Tanggal Setoran (Menggantikan window.prompt) */}
+      {showDateModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="date-modal-title" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+          <div className="form-card" style={{ maxWidth: '400px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 id="date-modal-title" className="form-card-title" style={{ margin: 0 }}>Pilih Tanggal Setoran</h3>
+              <button
+                type="button"
+                onClick={() => setShowDateModal(false)}
+                style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                aria-label="Tutup dialog tanggal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => {
+                  const today = new Intl.DateTimeFormat('id-ID', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  }).format(new Date());
+                  setDepositDate(today);
+                  setShowDateModal(false);
+                  showToast(`Tanggal diatur: ${today}`);
+                }}
+                style={{ minHeight: '44px', textAlign: 'left', justifyContent: 'flex-start' }}
+              >
+                📅 Hari ini ({new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date())})
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() - 1);
+                  const yesterday = new Intl.DateTimeFormat('id-ID', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  }).format(d);
+                  setDepositDate(yesterday);
+                  setShowDateModal(false);
+                  showToast(`Tanggal diatur: ${yesterday}`);
+                }}
+                style={{ minHeight: '44px', textAlign: 'left', justifyContent: 'flex-start' }}
+              >
+                ⏪ Kemarin
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label htmlFor="custom-date" className="field-label" style={{ marginBottom: '4px', display: 'block' }}>
+                Atau pilih tanggal kalender:
+              </label>
+              <input
+                id="custom-date"
+                type="date"
+                className="field-input"
+                value={customDateInput}
+                onChange={(e) => setCustomDateInput(e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  if (customDateInput) {
+                    const parsed = new Date(customDateInput);
+                    if (!isNaN(parsed.getTime())) {
+                      const formatted = new Intl.DateTimeFormat('id-ID', {
+                        weekday: 'long',
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      }).format(parsed);
+                      setDepositDate(formatted);
+                    }
+                  }
+                  setShowDateModal(false);
+                }}
+                style={{ minHeight: '44px' }}
+              >
+                Terapkan
+              </button>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setShowDateModal(false)}
+                style={{ minHeight: '44px' }}
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog: Ubah Nominal Diterima (Menggantikan window.prompt) */}
+      {showAmountModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="amount-modal-title" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+          <div className="form-card" style={{ maxWidth: '400px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 id="amount-modal-title" className="form-card-title" style={{ margin: 0 }}>Ubah Uang Diterima</h3>
+              <button
+                type="button"
+                onClick={() => setShowAmountModal(false)}
+                style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                aria-label="Tutup dialog nominal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label htmlFor="custom-amount" className="field-label" style={{ marginBottom: '4px', display: 'block' }}>
+                Nominal Uang Fisik dari Karyawan (Rp)
+              </label>
+              <input
+                id="custom-amount"
+                type="number"
+                min="0"
+                step="1000"
+                className="field-input"
+                value={customAmountInput}
+                onChange={(e) => setCustomAmountInput(e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box', fontSize: '16px', fontWeight: 700 }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', marginBottom: '16px' }}>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setCustomAmountInput(String((Number(customAmountInput) || 0) + 10000))}
+                style={{ minHeight: '40px', fontSize: '11px', padding: '4px 6px' }}
+              >
+                +10.000
+              </button>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setCustomAmountInput(String((Number(customAmountInput) || 0) + 50000))}
+                style={{ minHeight: '40px', fontSize: '11px', padding: '4px 6px' }}
+              >
+                +50.000
+              </button>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setCustomAmountInput(String(expectedAmount))}
+                style={{ minHeight: '40px', fontSize: '11px', padding: '4px 6px' }}
+              >
+                Setel Pas
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  const val = Number(customAmountInput);
+                  if (!isNaN(val) && val >= 0) {
+                    setReceivedAmount(val);
+                    showToast(`Uang diterima diubah menjadi Rp ${new Intl.NumberFormat('id-ID').format(val)}`);
+                  }
+                  setShowAmountModal(false);
+                }}
+                style={{ minHeight: '44px' }}
+              >
+                Simpan Nominal
+              </button>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setShowAmountModal(false)}
+                style={{ minHeight: '44px' }}
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog: Penjelasan Selisih Setoran (Interactivity untuk Finding 5) */}
+      {showDiscrepancyModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="discrepancy-modal-title" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+          <div className="form-card" style={{ maxWidth: '420px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={20} color="var(--red)" />
+                <h3 id="discrepancy-modal-title" className="form-card-title" style={{ margin: 0 }}>Penjelasan Selisih Setoran</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDiscrepancyModal(false)}
+                style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                aria-label="Tutup dialog selisih"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+              <div className="summary-box-row">
+                <span>Uang Seharusnya Diserahkan:</span>
+                <strong>Rp {new Intl.NumberFormat('id-ID').format(expectedAmount)}</strong>
+              </div>
+              <div className="summary-box-row">
+                <span>Uang Fisik yang Diterima:</span>
+                <strong>Rp {new Intl.NumberFormat('id-ID').format(receivedAmount)}</strong>
+              </div>
+              <div className="summary-box-row" style={{ paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
+                <span style={{ fontWeight: 800 }}>Status Selisih:</span>
+                <strong style={{ color: receivedAmount < expectedAmount ? 'var(--red)' : receivedAmount > expectedAmount ? 'var(--blue)' : 'var(--green)', fontSize: '14px' }}>
+                  {receivedAmount < expectedAmount
+                    ? `Kurang Rp ${new Intl.NumberFormat('id-ID').format(expectedAmount - receivedAmount)}`
+                    : receivedAmount > expectedAmount
+                    ? `Lebih Rp ${new Intl.NumberFormat('id-ID').format(receivedAmount - expectedAmount)}`
+                    : 'Rp 0 (Pas)'}
+                </strong>
+              </div>
+            </div>
+
+            <div style={{ padding: '10px 12px', background: 'var(--amber-pale)', borderRadius: '8px', border: '1px solid #e2bc74', fontSize: '11px', color: 'var(--ink)', marginBottom: '16px' }}>
+              <strong>Langkah Pemeriksaan Pemilik:</strong>
+              <p style={{ marginTop: '4px' }}>
+                Jika ada selisih kurang, tanyakan kepada karyawan apakah terdapat nota belanja darurat, uang kembalian pelanggan di laci kasir, atau transaksi piutang. Catat alasan tersebut di kolom <em>Keterangan</em> sebelum menekan Simpan.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowDiscrepancyModal(false)}
+              style={{ minHeight: '44px', width: '100%' }}
+            >
+              Mengerti & Kembali
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog: Tambah Produk Baru ke Master Katalog */}
+      {showAddProductModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="add-product-title" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+          <div className="form-card" style={{ maxWidth: '440px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Package size={20} color="var(--orange)" />
+                <h3 id="add-product-title" className="form-card-title" style={{ margin: 0 }}>Tambah Produk Baru</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddProductModal(false)}
+                style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                aria-label="Tutup dialog tambah produk"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '0 0 12px 0' }}>
+              Menambah master produk baru ke katalog toko. Produk baru tidak otomatis menambah stok awal maupun membuat transaksi pembelian.
+            </p>
+
+            <div style={{ marginBottom: '12px' }}>
+              <label htmlFor="np-name" className="field-label" style={{ display: 'block', marginBottom: '4px' }}>
+                Nama Produk *
+              </label>
+              <input
+                id="np-name"
+                type="text"
+                className="field-input"
+                placeholder="Contoh: Teh Botol Sosro 450ml"
+                value={newProdName}
+                onChange={(e) => setNewProdName(e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div className="form-row-pair" style={{ marginBottom: '12px' }}>
+              <div className="field-group">
+                <label htmlFor="np-cat" className="field-label">Kategori</label>
+                <select
+                  id="np-cat"
+                  className="field-select"
+                  value={newProdCategory}
+                  onChange={(e) => setNewProdCategory(e.target.value as 'Makanan' | 'Minuman' | 'Rokok' | 'Lainnya')}
+                >
+                  <option value="Makanan">Makanan</option>
+                  <option value="Minuman">Minuman</option>
+                  <option value="Rokok">Rokok</option>
+                  <option value="Lainnya">Lainnya</option>
+                </select>
+              </div>
+
+              <div className="field-group">
+                <label htmlFor="np-icon" className="field-label">Ikon</label>
+                <select
+                  id="np-icon"
+                  className="field-select"
+                  value={newProdIcon}
+                  onChange={(e) => setNewProdIcon(e.target.value)}
+                >
+                  <option value="📦">📦 Barang Umum</option>
+                  <option value="🍜">🍜 Makanan / Mie</option>
+                  <option value="💧">💧 Minuman Air</option>
+                  <option value="🧃">🧃 Minuman Kemasan</option>
+                  <option value="🥚">🥚 Telur / Sembako</option>
+                  <option value="🍚">🍚 Beras / Gula</option>
+                  <option value="🍪">🍪 Snack / Biskuit</option>
+                  <option value="🚬">🚬 Rokok</option>
+                  <option value="🧼">🧼 Sabun / Toko</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-row-pair" style={{ marginBottom: '12px' }}>
+              <div className="field-group">
+                <label htmlFor="np-unit" className="field-label">Satuan Kemasan</label>
+                <input
+                  id="np-unit"
+                  type="text"
+                  className="field-input"
+                  placeholder="Dus (24 botol) / Pcs"
+                  value={newProdUnit}
+                  onChange={(e) => setNewProdUnit(e.target.value)}
+                />
+              </div>
+
+              <div className="field-group">
+                <label htmlFor="np-packsize" className="field-label">Isi per Kemasan</label>
+                <input
+                  id="np-packsize"
+                  type="number"
+                  min="1"
+                  className="field-input"
+                  placeholder="24"
+                  value={newProdPackSize}
+                  onChange={(e) => setNewProdPackSize(Math.max(1, Number(e.target.value) || 1))}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <label htmlFor="np-sell" className="field-label" style={{ display: 'block', marginBottom: '4px' }}>
+                Harga Jual Satuan (Rp / pcs) *
+              </label>
+              <input
+                id="np-sell"
+                type="number"
+                min="0"
+                step="500"
+                className="field-input"
+                placeholder="Contoh: 3500"
+                value={newProdSellingPrice}
+                onChange={(e) => setNewProdSellingPrice(e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '16px', padding: '10px 12px', background: 'var(--paper)', borderRadius: '8px', border: '1px solid var(--line)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label htmlFor="np-cost" style={{ fontSize: '11px', fontWeight: 800 }}>
+                  Modal Kemasan Pembelian (Rp):
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: 'var(--muted)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={newProdIsCostUnknown}
+                    onChange={(e) => setNewProdIsCostUnknown(e.target.checked)}
+                  />
+                  <span>Modal belum diketahui</span>
+                </label>
+              </div>
+
+              {!newProdIsCostUnknown ? (
+                <input
+                  id="np-cost"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  className="field-input"
+                  placeholder="Contoh: 72000"
+                  value={newProdCostPerPack}
+                  onChange={(e) => setNewProdCostPerPack(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                />
+              ) : (
+                <div style={{ padding: '6px 8px', background: '#fef3c7', borderRadius: '4px', fontSize: '11px', color: '#b45309' }}>
+                  ℹ️ Modal akan disimpan sebagai <strong>null</strong> (bukan Rp 0). Keuntungan tidak akan dihitung secara fiktif sebelum modal diketahui.
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleAddProduct}
+                style={{ minHeight: '44px', width: '100%' }}
+              >
+                Daftarkan Produk Baru →
+              </button>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setShowAddProductModal(false)}
+                style={{ minHeight: '40px', fontSize: '11px' }}
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notification Container */}
       {toastMessage && (

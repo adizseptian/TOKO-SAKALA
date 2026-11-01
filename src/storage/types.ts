@@ -160,7 +160,7 @@ export interface BackupMetadata {
 /**
  * Status Adapter Penyimpanan
  */
-export type StorageBackendType = 'google_drive' | 'in_memory' | 'offline_local';
+export type StorageBackendType = 'google_drive' | 'in_memory' | 'offline_local' | 'indexeddb' | 'supabase';
 
 export interface StorageStatus {
   backend: StorageBackendType;

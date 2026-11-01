@@ -1,0 +1,107 @@
+{
+  "app": "toko-sakala",
+  "schemaVersion": 1,
+  "dataVersion": 1,
+  "updatedAt": "2026-10-31T13:30:03.769Z",
+  "payload": {
+    "inventoryItems": [
+      {
+        "id": "indomie",
+        "name": "Indomie Goreng",
+        "category": "Makanan",
+        "unit": "Dus (40 pcs)",
+        "packSize": 40,
+        "costPerPack": 96000,
+        "sellingPricePerUnit": 3000,
+        "currentPhysicalStock": 12
+      },
+      {
+        "id": "sedap",
+        "name": "Mie Sedap",
+        "category": "Makanan",
+        "unit": "Dus (40 pcs)",
+        "packSize": 40,
+        "costPerPack": 92000,
+        "sellingPricePerUnit": 2800,
+        "currentPhysicalStock": 8
+      },
+      {
+        "id": "aqua",
+        "name": "Aqua 600ml",
+        "category": "Minuman",
+        "unit": "Dus (24 botol)",
+        "packSize": 24,
+        "costPerPack": 45000,
+        "sellingPricePerUnit": 3000,
+        "currentPhysicalStock": 5
+      },
+      {
+        "id": "telur",
+        "name": "Telur Ayam Negeri",
+        "category": "Makanan",
+        "unit": "Kg",
+        "packSize": 1,
+        "costPerPack": 26000,
+        "sellingPricePerUnit": 29000,
+        "currentPhysicalStock": 25
+      },
+      {
+        "id": "gula",
+        "name": "Gula Pasir",
+        "category": "Makanan",
+        "unit": "Kg",
+        "packSize": 1,
+        "costPerPack": 16000,
+        "sellingPricePerUnit": 18000,
+        "currentPhysicalStock": 15
+      },
+      {
+        "id": "chocopie",
+        "name": "ChocoPie",
+        "category": "Makanan",
+        "unit": "Pcs",
+        "packSize": 1,
+        "costPerPack": 2000,
+        "sellingPricePerUnit": 2500,
+        "currentPhysicalStock": 50
+      },
+      {
+        "id": "sampoerna",
+        "name": "Rokok Sampoerna",
+        "category": "Rokok",
+        "unit": "Slop (10 bks)",
+        "packSize": 10,
+        "costPerPack": 310000,
+        "sellingPricePerUnit": 34000,
+        "currentPhysicalStock": 3
+      }
+    ],
+    "purchases": [
+      {
+        "id": "p-init-1",
+        "date": "2026-10-30",
+        "productId": "indomie",
+        "productName": "Indomie Goreng",
+        "quantity": 2,
+        "unit": "dus",
+        "totalCost": 192000,
+        "totalUnits": 80,
+        "createdAt": "2026-10-30T13:30:03.769Z"
+      }
+    ],
+    "expenses": [
+      {
+        "id": "e-init-1",
+        "date": "2026-10-30",
+        "category": "Listrik",
+        "description": "Token listrik toko",
+        "amount": 50000,
+        "createdAt": "2026-10-30T13:30:03.769Z"
+      }
+    ],
+    "stockChecks": [],
+    "deposits": [],
+    "dailyClosings": []
+  },
+  "checksum": "671fac2c0153068585b546a31247d9dceaad9662c23a6111fe50db20daea3e5b"
+}

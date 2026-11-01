@@ -4,3 +4,6 @@ export * from './storageAdapter';
 export * from './mockStorageAdapter';
 export * from './googleDriveAdapter';
 export * from './googleAuth';
+export * from './indexeddbAdapter';
+export * from './supabaseAdapter';
+export * from './syncEngine';
