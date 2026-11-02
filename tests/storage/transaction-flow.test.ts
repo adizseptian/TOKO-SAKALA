@@ -19,7 +19,7 @@ describe('Alur Transaksi Nyata & Keutuhan Penyimpanan (Save/Load/Restore)', () =
       packs: 2,
       unitsPerPack: 40,
       totalCost: 192000,
-      sourceMoney: 'STORE',
+      sourceMoney: 'SETORAN',
     };
 
     const updatedPayload: TokoSakalaPayload = {
@@ -85,7 +85,7 @@ describe('Alur Transaksi Nyata & Keutuhan Penyimpanan (Save/Load/Restore)', () =
       occurredAt: new Date().toISOString(),
       description: 'Listrik toko & pulsa token',
       amount: 150000,
-      sourceMoney: 'STORE',
+      sourceMoney: 'LACI',
     };
 
     const updatedPayload: TokoSakalaPayload = {
@@ -116,7 +116,7 @@ describe('Alur Transaksi Nyata & Keutuhan Penyimpanan (Save/Load/Restore)', () =
           occurredAt: new Date().toISOString(),
           description: 'Beli galon air',
           amount: 20000,
-          sourceMoney: 'STORE',
+          sourceMoney: 'LACI',
         },
       ],
     };

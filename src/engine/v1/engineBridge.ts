@@ -19,22 +19,39 @@ export interface StoreFinancialSummary {
   engineOutput: EngineOutput;
   /** Nilai penjualan dari cek sisa stok */
   grossSales: { min: number; max: number };
-  /** Modal barang terjual (HPP) */
+  /** Modal barang terjual (HPP / Modal kembali) */
   cogsKnown: number;
-  /** Laba kotor (Penjualan - Modal) */
+  modalKembali: number;
+  /** Laba kotor (Penjualan - Modal terjual) */
   grossProfit: { min: number; max: number } | null;
-  /** Total biaya operasional toko */
+  /** Total seluruh biaya operasional toko */
   expensesTotal: number;
-  /** Laba bersih operasional (Laba kotor - Biaya toko) */
+  /** Biaya dari laci kasir (yang mengurangi setoran seharusnya) */
+  expensesLaci: number;
+  /** Laba bersih operasional (Laba kotor - Seluruh biaya toko) */
   netProfit: { min: number; max: number } | null;
-  /** Uang kas toko yang seharusnya siap disetor karyawan */
+  /** Setoran kas yang seharusnya diserahkan (Penjualan - Biaya laci) */
   expectedDeposit: number;
   /** Total setoran yang sudah diterima dari karyawan */
   totalDeposits: number;
-  /** Selisih setoran terakhir / akumulasi */
+  /** Sisa disetor (Setoran seharusnya - Setoran diterima sebelumnya) */
+  remainingDeposit: number;
+  /** Selisih setoran (Diterima - Seharusnya) */
   depositDiscrepancy: number;
+  /** Total belanja keseluruhan */
+  totalPurchases: number;
+  /** Belanja yang dibayar dari uang setoran */
+  purchasesFromSetoran: number;
+  /** Pengambilan pribadi oleh pemilik */
+  ownerWithdrawalsTotal: number;
+  /** Uang di tangan (Setoran diterima - Belanja dari setoran - Pengambilan pribadi) */
+  cashInHand: number;
+  /** Sisa dana belanja (Modal kembali - Total belanja; negatif = diambil dari untung) */
+  remainingShoppingBudget: number;
   /** Status kepastian angka keuangan */
   certainty: 'PASTI' | 'PERLU_DIPERIKSA' | 'BELUM_DIKETAHUI';
+  /** Satu alasan utama badge/chip peringatan */
+  reviewReason: string | null;
   /** Total item barang fisik yang tersedia di toko menurut catatan */
   totalAvailableUnits: number;
   /** Nilai aset barang fisik di toko menurut modal yang diketahui */
@@ -67,6 +84,11 @@ export function buildEngineInputFromPayload(
 
   // 2. Kumpulkan mutasi pembelian belanja (purchase)
   (payload.purchaseRecords || []).forEach((purch) => {
+    let sourceMoney: any = purch.sourceMoney;
+    if (sourceMoney === 'STORE') sourceMoney = 'SETORAN';
+    else if (sourceMoney === 'PERSONAL') sourceMoney = 'PRIBADI';
+    else if (!sourceMoney) sourceMoney = 'SETORAN';
+
     events.push({
       id: purch.id,
       seq: 0,
@@ -76,7 +98,7 @@ export function buildEngineInputFromPayload(
       packs: Math.max(1, purch.packs),
       unitsPerPack: Math.max(1, purch.unitsPerPack),
       totalCost: purch.totalCost,
-      sourceMoney: purch.sourceMoney || 'STORE',
+      sourceMoney,
     });
   });
 
@@ -147,6 +169,11 @@ export function buildEngineInputFromPayload(
 
   // 4. Kumpulkan pengeluaran operasional toko (expense)
   (payload.expenses || []).forEach((exp) => {
+    let sourceMoney: any = exp.sourceMoney;
+    if (sourceMoney === 'STORE') sourceMoney = 'LACI';
+    else if (sourceMoney === 'PERSONAL') sourceMoney = 'PRIBADI';
+    else if (!sourceMoney) sourceMoney = 'LACI';
+
     events.push({
       id: exp.id,
       seq: 0,
@@ -154,7 +181,7 @@ export function buildEngineInputFromPayload(
       type: 'expense',
       description: exp.description,
       amount: exp.amount,
-      sourceMoney: exp.sourceMoney || 'STORE',
+      sourceMoney,
     });
   });
 
@@ -212,7 +239,16 @@ export function runStoreFinancialEngine(
 
   const grossSales = engineOutput.totals.salesRevenue;
   const cogsKnown = engineOutput.totals.costOfGoodsSoldKnown;
+  const modalKembali = cogsKnown;
   const expensesTotal = engineOutput.totals.expenses;
+
+  // Biaya dari laci kasir (hanya yang mengurangi setoran toko)
+  let expensesLaci = 0;
+  (payload.expenses || []).forEach((e) => {
+    if (e.sourceMoney === 'LACI' || (e.sourceMoney as any) === 'STORE') {
+      expensesLaci += e.amount;
+    }
+  });
 
   // Laba Kotor = Penjualan - Modal Terjual
   const grossProfit =
@@ -223,7 +259,7 @@ export function runStoreFinancialEngine(
         }
       : null;
 
-  // Laba Bersih = Laba Kotor - Biaya Toko
+  // Laba Bersih = Laba Kotor - Total Biaya Toko
   const netProfit =
     grossProfit !== null
       ? {
@@ -232,23 +268,55 @@ export function runStoreFinancialEngine(
         }
       : null;
 
-  // Uang yang seharusnya diserahkan karyawan:
-  // Dihitung dari kas toko dari penjualan dikurangi biaya toko & belanja yang dibayar kas toko,
-  // sebelum setoran diserahkan.
-  let cashFromSales = grossSales.min;
-  let cashOutStore = 0;
-  (payload.expenses || []).forEach((e) => {
-    if (e.sourceMoney === 'STORE') cashOutStore += e.amount;
-  });
-  (payload.purchaseRecords || []).forEach((p) => {
-    if (p.sourceMoney === 'STORE') cashOutStore += p.totalCost;
-  });
+  // Setoran seharusnya = Penjualan - Biaya laci
+  const expectedDeposit = Math.max(0, grossSales.min - expensesLaci);
 
-  // Uang kas toko yang siap setor (tidak boleh negatif)
-  const expectedDeposit = Math.max(0, cashFromSales - cashOutStore);
-
+  // Total setoran yang sudah diterima dari karyawan
   const totalDeposits = engineOutput.totals.totalDeposits;
+
+  // Sisa disetor = Setoran seharusnya - Setoran diterima sebelumnya
+  const remainingDeposit = Math.max(0, expectedDeposit - totalDeposits);
+
+  // Selisih = Diterima - Seharusnya
   const depositDiscrepancy = totalDeposits - expectedDeposit;
+
+  // Belanja
+  let totalPurchases = 0;
+  let purchasesFromSetoran = 0;
+  (payload.purchaseRecords || []).forEach((p) => {
+    totalPurchases += p.totalCost;
+    if (p.sourceMoney === 'SETORAN' || (p.sourceMoney as any) === 'STORE') {
+      purchasesFromSetoran += p.totalCost;
+    }
+  });
+
+  // Pengambilan pribadi
+  let ownerWithdrawalsTotal = 0;
+  (payload.ownerWithdrawals || []).forEach((w) => {
+    ownerWithdrawalsTotal += w.amount;
+  });
+
+  // Uang di tangan = Setoran diterima - Belanja dari setoran - Pengambilan pribadi
+  const cashInHand = totalDeposits - purchasesFromSetoran - ownerWithdrawalsTotal;
+
+  // Sisa dana belanja = Modal kembali - Total belanja (negatif = diambil dari untung)
+  const remainingShoppingBudget = modalKembali - totalPurchases;
+
+  // Cari satu alasan utama bila kepastian bukan PASTI
+  let reviewReason: string | null = null;
+  if (engineOutput.totals.certainty !== 'PASTI') {
+    if (engineOutput.issues.some((i) => i.code === 'UNKNOWN_MODAL_SOLD')) {
+      reviewReason = 'Modal belum diketahui';
+    } else if (engineOutput.issues.some((i) => i.code === 'PRODUCT_NOT_CHECKED')) {
+      reviewReason = 'Cek sisa belum lengkap';
+    } else if (engineOutput.issues.some((i) => i.code === 'MIXED_SELLING_PRICE')) {
+      reviewReason = 'Harga berubah';
+    } else if (engineOutput.issues.some((i) => i.code === 'STOCK_EXCESS')) {
+      reviewReason = 'Sisa melebihi catatan';
+    } else if (engineOutput.issues.length > 0) {
+      reviewReason = engineOutput.issues[0].message;
+    }
+  }
 
   let totalAvailableUnits = 0;
   let knownInventoryValue = 0;
@@ -271,13 +339,22 @@ export function runStoreFinancialEngine(
     engineOutput,
     grossSales,
     cogsKnown,
+    modalKembali,
     grossProfit,
     expensesTotal,
+    expensesLaci,
     netProfit,
     expectedDeposit,
     totalDeposits,
+    remainingDeposit,
     depositDiscrepancy,
+    totalPurchases,
+    purchasesFromSetoran,
+    ownerWithdrawalsTotal,
+    cashInHand,
+    remainingShoppingBudget,
     certainty: engineOutput.totals.certainty,
+    reviewReason,
     totalAvailableUnits,
     knownInventoryValue,
     stockByProduct,

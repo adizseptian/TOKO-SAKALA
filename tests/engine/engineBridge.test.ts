@@ -30,7 +30,7 @@ describe('TOKO SAKALA Engine Bridge', () => {
           packs: 2,
           unitsPerPack: 40,
           totalCost: 192000, // 80 pcs @ 2.400
-          sourceMoney: 'STORE',
+          sourceMoney: 'SETORAN',
         },
       ],
       stockMovements: [
@@ -69,7 +69,7 @@ describe('TOKO SAKALA Engine Bridge', () => {
           packs: 1,
           unitsPerPack: 40,
           totalCost: 96000,
-          sourceMoney: 'PERSONAL', // dibayar uang pribadi pemilik, tidak mengurangi kasir
+          sourceMoney: 'PRIBADI', // dibayar uang pribadi pemilik, tidak mengurangi kasir
         },
       ],
       stockMovements: [
@@ -88,7 +88,7 @@ describe('TOKO SAKALA Engine Bridge', () => {
           occurredAt: '2026-11-02T11:00:00Z',
           description: 'Beli plastik dan sedotan',
           amount: 10000,
-          sourceMoney: 'STORE', // dipotong dari uang kasir
+          sourceMoney: 'LACI', // dipotong dari uang kasir
         },
       ],
     };

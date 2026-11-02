@@ -32,7 +32,7 @@ describe('MockStorageAdapter Lifecycle & Operations', () => {
           occurredAt: '2026-10-28T07:20:00Z',
           description: 'Listrik toko',
           amount: 150000,
-          sourceMoney: 'STORE' as const,
+          sourceMoney: 'LACI' as const,
         },
       ],
     };

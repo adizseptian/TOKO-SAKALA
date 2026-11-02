@@ -41,7 +41,11 @@ export const PurchaseRecordSchema = z.object({
   packs: QuantitySchema.refine((v) => v > 0),
   unitsPerPack: QuantitySchema.refine((v) => v > 0),
   totalCost: RupiahSchema,
-  sourceMoney: z.enum(['STORE', 'PERSONAL']),
+  sourceMoney: z.preprocess((val) => {
+    if (val === 'STORE') return 'SETORAN';
+    if (val === 'PERSONAL') return 'PRIBADI';
+    return val;
+  }, z.enum(['LACI', 'SETORAN', 'PRIBADI'])).default('SETORAN'),
   receiptRef: z.string().max(60).optional(),
 });
 
@@ -60,7 +64,18 @@ export const ExpenseRecordSchema = z.object({
   occurredAt: z.string().datetime({ offset: true }),
   description: z.string().trim().min(1).max(160),
   amount: RupiahSchema.refine((v) => v > 0),
-  sourceMoney: z.enum(['STORE', 'PERSONAL']),
+  sourceMoney: z.preprocess((val) => {
+    if (val === 'STORE') return 'LACI';
+    if (val === 'PERSONAL') return 'PRIBADI';
+    return val;
+  }, z.enum(['LACI', 'SETORAN', 'PRIBADI'])).default('LACI'),
+});
+
+export const OwnerWithdrawalRecordSchema = z.object({
+  id: z.string().min(1),
+  occurredAt: z.string().datetime({ offset: true }),
+  amount: RupiahSchema.refine((v) => v > 0),
+  notes: z.string().max(250).optional(),
 });
 
 export const DepositRecordSchema = z.object({
@@ -113,6 +128,7 @@ export const TokoSakalaPayloadSchema = z.object({
   salesRecords: z.array(SalesRecordSchema).default([]),
   expenses: z.array(ExpenseRecordSchema).default([]),
   deposits: z.array(DepositRecordSchema).default([]),
+  ownerWithdrawals: z.array(OwnerWithdrawalRecordSchema).default([]),
   closedPeriods: z.array(ClosedPeriodSchema).default([]),
   corrections: z.array(CorrectionRecordSchema).default([]),
   settings: AppSettingsSchema.default({
@@ -142,6 +158,64 @@ export type StorageProduct = z.infer<typeof StorageProductSchema>;
 export type PurchaseRecord = z.infer<typeof PurchaseRecordSchema>;
 export type ExpenseRecord = z.infer<typeof ExpenseRecordSchema>;
 export type DepositRecord = z.infer<typeof DepositRecordSchema>;
+export type OwnerWithdrawalRecord = z.infer<typeof OwnerWithdrawalRecordSchema>;
+
+/**
+ * Migrasi data lama dari STORE | PERSONAL ke LACI | SETORAN | PRIBADI
+ */
+export function migrateLegacyPayload(raw: any): TokoSakalaPayload {
+  if (!raw) {
+    return {
+      products: [],
+      stockMovements: [],
+      purchaseRecords: [],
+      salesRecords: [],
+      expenses: [],
+      deposits: [],
+      ownerWithdrawals: [],
+      closedPeriods: [],
+      corrections: [],
+      settings: {
+        shopName: 'TOKO SAKALA',
+        ownerEmail: 'adizseptian@gmail.com',
+        currency: 'IDR',
+        theme: 'light',
+        aiAssistantEnabled: false,
+      },
+    };
+  }
+
+  const purchases = (raw.purchaseRecords || []).map((p: any) => {
+    let sourceMoney = p.sourceMoney;
+    if (sourceMoney === 'STORE') sourceMoney = 'SETORAN';
+    else if (sourceMoney === 'PERSONAL') sourceMoney = 'PRIBADI';
+    else if (!sourceMoney) sourceMoney = 'SETORAN';
+    return { ...p, sourceMoney };
+  });
+
+  const expenses = (raw.expenses || []).map((e: any) => {
+    let sourceMoney = e.sourceMoney;
+    if (sourceMoney === 'STORE') sourceMoney = 'LACI';
+    else if (sourceMoney === 'PERSONAL') sourceMoney = 'PRIBADI';
+    else if (!sourceMoney) sourceMoney = 'LACI';
+    return { ...e, sourceMoney };
+  });
+
+  const ownerWithdrawals = Array.isArray(raw.ownerWithdrawals) ? raw.ownerWithdrawals : [];
+
+  return {
+    ...raw,
+    purchaseRecords: purchases,
+    expenses,
+    ownerWithdrawals,
+    products: raw.products || [],
+    stockMovements: raw.stockMovements || [],
+    salesRecords: raw.salesRecords || [],
+    deposits: raw.deposits || [],
+    closedPeriods: raw.closedPeriods || [],
+    corrections: raw.corrections || [],
+  };
+}
 
 /**
  * Metadata Cadangan (Backup)

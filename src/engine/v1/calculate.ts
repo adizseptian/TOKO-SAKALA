@@ -138,7 +138,7 @@ export function calculate(input: EngineInput): EngineOutput {
       pool.knownValue += event.totalCost;
       ensureSafeInteger(pool.knownUnits, "knownUnitsAfterPurchase");
       ensureSafeInteger(pool.knownValue, "knownValueAfterPurchase");
-      if (event.sourceMoney === "STORE") storeCash = subRangeFromNumber(storeCash, event.totalCost);
+      if (event.sourceMoney === "LACI" || event.sourceMoney === "STORE") storeCash = subRangeFromNumber(storeCash, event.totalCost);
       continue;
     }
 
@@ -251,7 +251,7 @@ export function calculate(input: EngineInput): EngineOutput {
 
     if (event.type === "expense") {
       expenses += event.amount;
-      if (event.sourceMoney === "STORE") storeCash = subRangeFromNumber(storeCash, event.amount);
+      if (event.sourceMoney === "LACI" || event.sourceMoney === "STORE") storeCash = subRangeFromNumber(storeCash, event.amount);
       continue;
     }
     if (event.type === "other_income") {

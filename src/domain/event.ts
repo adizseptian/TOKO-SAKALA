@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const RupiahSchema = z.number().int().nonnegative().safe();
 export const QuantitySchema = z.number().int().nonnegative().safe();
-export const MoneySourceSchema = z.enum(["STORE", "PERSONAL"]);
+export const MoneySourceSchema = z.enum(["LACI", "SETORAN", "PRIBADI", "STORE", "PERSONAL"]);
 export const CertaintySchema = z.enum(["PASTI", "PERLU_DIPERIKSA", "BELUM_DIKETAHUI"]);
 
 const EventBase = z.object({

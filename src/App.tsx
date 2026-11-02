@@ -4,7 +4,8 @@ import {
   Package, Wallet, FileText, ArrowLeft, Search, SlidersHorizontal, Plus,
   Minus, Check, ArrowRight, CornerDownLeft, Sparkles, RefreshCw, Moon, Sun,
   Cloud, Database, ShieldCheck, History, HardDrive, KeyRound, ExternalLink,
-  CheckCircle2, XCircle, Download, Upload, Server, RotateCcw, HelpCircle, Undo2
+  CheckCircle2, XCircle, Download, Upload, Server, RotateCcw, HelpCircle, Undo2,
+  Info, ArrowUpDown
 } from 'lucide-react';
 import { ModalForm } from '@/components/ModalForm';
 import { calculatePurchasePreview } from '@/engine/v1/purchase-preview';
@@ -17,12 +18,14 @@ import {
   SupabaseAdapter,
   SyncEngine,
   createDefaultPayload,
+  migrateLegacyPayload,
   type AuthState,
   type BackupMetadata,
   type TokoSakalaPayload,
   type PurchaseRecord,
   type ExpenseRecord,
   type DepositRecord,
+  type OwnerWithdrawalRecord,
   type SyncEngineStatus,
 } from '@/storage';
 import {
@@ -100,27 +103,73 @@ export default function App() {
     return runStoreFinancialEngine(docPayload, catalogList);
   }, [docPayload, catalogList]);
 
+function formatRupiahInput(val: string): string {
+  const clean = val.replace(/\D/g, '');
+  if (!clean) return '';
+  return new Intl.NumberFormat('id-ID').format(Number(clean));
+}
+
+function parseRupiahInput(val: string): number {
+  return Number(val.replace(/\D/g, '')) || 0;
+}
+
+const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number }> = ({ onClick, label = 'Rincian perhitungan', size = 15 }) => (
+  <button
+    type="button"
+    onClick={(e) => {
+      e.stopPropagation();
+      onClick();
+    }}
+    aria-label={label}
+    style={{
+      minWidth: '44px',
+      minHeight: '44px',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'transparent',
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0,
+      margin: 0,
+      color: 'var(--muted)',
+    }}
+  >
+    <Info size={size} />
+  </button>
+);
+
   // Screen 2: Catat Belanja State
   const [selectedProduct, setSelectedProduct] = useState<ProductItem>(INITIAL_CATALOG[0]);
   const [purchaseQty, setPurchaseQty] = useState<number>(2);
-  const [purchaseUnit, setPurchaseUnit] = useState<string>('dus');
+  const [purchaseUnit, setPurchaseUnit] = useState<string>('kemasan');
   const [customPurchaseCost, setCustomPurchaseCost] = useState<string>('');
   const [catatCategory, setCatatCategory] = useState<string>('Semua');
   const [catatSearch, setCatatSearch] = useState<string>('');
+  const [purchaseSourceMoney, setPurchaseSourceMoney] = useState<'SETORAN' | 'PRIBADI'>(() => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('toko_sakala_belanja_source');
+      if (saved === 'SETORAN' || saved === 'PRIBADI') return saved;
+    }
+    return 'SETORAN';
+  });
+  const [catatSort, setCatatSort] = useState<'terbaru' | 'alphabetical'>('terbaru');
 
   // Master Product Modal State
   const [showAddProductModal, setShowAddProductModal] = useState<boolean>(false);
   const [newProdName, setNewProdName] = useState<string>('');
   const [newProdCategory, setNewProdCategory] = useState<'Makanan' | 'Minuman' | 'Rokok' | 'Lainnya'>('Makanan');
+  const [newProdPreset, setNewProdPreset] = useState<string>('Dus (24 pcs)');
   const [newProdUnit, setNewProdUnit] = useState<string>('Dus (24 pcs)');
   const [newProdPackSize, setNewProdPackSize] = useState<number>(24);
   const [newProdCostPerPack, setNewProdCostPerPack] = useState<string>('');
   const [newProdIsCostUnknown, setNewProdIsCostUnknown] = useState<boolean>(false);
-  const [newProdSellingPrice, setNewProdSellingPrice] = useState<string>('3000');
-  const [newProdIcon, setNewProdIcon] = useState<string>('📦');
+  const [newProdSellingPrice, setNewProdSellingPrice] = useState<string>(''); // Default kosong
+  const [newProdIcon, setNewProdIcon] = useState<string>('🍜');
 
   // Screen 3: Cek Sisa Stok State (dimulai bersih, pengguna mengisi sisa fisik)
   const [stockCounts, setStockCounts] = useState<Record<string, number | null>>({});
+  const [checkedTodayIds, setCheckedTodayIds] = useState<Set<string>>(new Set());
   const [stokCategory, setStokCategory] = useState<string>('Semua');
   const [stokSearch, setStokSearch] = useState<string>('');
 
@@ -129,6 +178,8 @@ export default function App() {
   const [receivedAmountInput, setReceivedAmountInput] = useState<number | null>(null);
   const receivedAmount = receivedAmountInput ?? expectedAmount;
   const [depositNote, setDepositNote] = useState<string>('');
+  const [selectedDateTab, setSelectedDateTab] = useState<'HARI_INI' | 'KEMARIN' | 'PILIH_TANGGAL'>('HARI_INI');
+  const [depositDateIso, setDepositDateIso] = useState<string>(() => new Date().toISOString());
   const [depositDate, setDepositDate] = useState<string>(() => {
     return new Intl.DateTimeFormat('id-ID', {
       weekday: 'long',
@@ -138,9 +189,39 @@ export default function App() {
     }).format(new Date());
   });
 
+  // Stepper Pecahan Uang Fisik Setoran
+  const [denominations, setDenominations] = useState<{ [denom: number]: number }>({
+    100000: 0,
+    50000: 0,
+    20000: 0,
+    10000: 0,
+    5000: 0,
+    2000: 0,
+    1000: 0,
+  });
+  const [showDenominations, setShowDenominations] = useState<boolean>(false);
+
   // Secondary Screen: Biaya Toko State
   const [expenseName, setExpenseName] = useState<string>('');
   const [expenseAmount, setExpenseAmount] = useState<number>(0);
+  const [expenseAmountStr, setExpenseAmountStr] = useState<string>('');
+  const [expenseSourceMoney, setExpenseSourceMoney] = useState<'LACI' | 'PRIBADI'>('LACI');
+
+  // Modal Pengambilan Pribadi (Owner Withdrawal)
+  const [showWithdrawModal, setShowWithdrawModal] = useState<boolean>(false);
+  const [withdrawAmountStr, setWithdrawAmountStr] = useState<string>('');
+  const [withdrawNote, setWithdrawNote] = useState<string>('');
+
+  // Bottom Sheet Modal Rincian Hitungan (ikon ⓘ)
+  const [detailModal, setDetailModal] = useState<{
+    title: string;
+    formula: string;
+    rows: Array<{ label: string; value: string; isNegative?: boolean; isHighlight?: boolean }>;
+    note?: string;
+    showItemsLink?: boolean;
+    itemsBreakdown?: Array<{ name: string; calculation: string; total: string }>;
+  } | null>(null);
+  const [showItemsBreakdownModal, setShowItemsBreakdownModal] = useState<Array<{ name: string; calculation: string; total: string }> | null>(null);
 
   // Internal Modals State
   const [showDateModal, setShowDateModal] = useState<boolean>(false);
@@ -218,7 +299,8 @@ export default function App() {
     localIndexedDB.requestPersistentStorage().catch(() => {});
 
     localIndexedDB.loadData().then(doc => {
-      setDocPayload(doc.payload);
+      const migrated = migrateLegacyPayload(doc.payload);
+      setDocPayload(migrated);
       setDataVersion(doc.dataVersion);
       setChecksumStatus('VALID');
     }).catch(err => {
@@ -252,7 +334,8 @@ export default function App() {
       driveAdapter.loadData().then(doc => {
         // Jika data Drive lebih mutakhir daripada lokal, sinkronkan
         if (doc.dataVersion > dataVersion) {
-          setDocPayload(doc.payload);
+          const migrated = migrateLegacyPayload(doc.payload);
+          setDocPayload(migrated);
           setDataVersion(doc.dataVersion);
           setChecksumStatus('VALID');
         }
@@ -483,10 +566,16 @@ export default function App() {
 
   const handleSavePurchase = async () => {
     const qty = Math.max(1, purchaseQty);
-    const packSize = selectedProduct.packSize;
+    const isKemasan = purchaseUnit !== 'pcs';
+    const packSize = isKemasan ? selectedProduct.packSize : 1;
+    const piecesToAdd = isKemasan ? qty * selectedProduct.packSize : qty;
+
     const computedCost = selectedProduct.costPerPack !== null
-      ? qty * selectedProduct.costPerPack
-      : Math.max(0, Number(customPurchaseCost) || 0);
+      ? (isKemasan
+          ? qty * selectedProduct.costPerPack
+          : Math.round((qty * selectedProduct.costPerPack) / selectedProduct.packSize))
+      : Math.max(0, parseRupiahInput(customPurchaseCost));
+
     const totalCost = computedCost;
     const nowIso = new Date().toISOString();
 
@@ -497,7 +586,7 @@ export default function App() {
       packs: qty,
       unitsPerPack: packSize,
       totalCost,
-      sourceMoney: 'STORE',
+      sourceMoney: purchaseSourceMoney,
     };
 
     const newMovement = {
@@ -505,9 +594,9 @@ export default function App() {
       occurredAt: nowIso,
       productId: selectedProduct.id,
       type: 'IN_PURCHASE' as const,
-      quantity: qty * packSize,
+      quantity: piecesToAdd,
       unit: 'pcs',
-      notes: `Belanja ${qty} ${selectedProduct.unit}`,
+      notes: `Belanja ${qty} ${isKemasan ? selectedProduct.unit : 'pcs'}`,
     };
 
     const nextPayload: TokoSakalaPayload = {
@@ -516,7 +605,7 @@ export default function App() {
       stockMovements: [newMovement, ...docPayload.stockMovements],
     };
 
-    const ok = await executeSaveTransaction(nextPayload, `Pembelian ${selectedProduct.name} (+${qty * packSize} pcs)`);
+    const ok = await executeSaveTransaction(nextPayload, `Pembelian ${selectedProduct.name} (+${piecesToAdd} pcs)`);
     if (ok) {
       setPurchaseQty(1);
       setCustomPurchaseCost('');
@@ -535,10 +624,10 @@ export default function App() {
       return;
     }
     const packSize = Math.max(1, Number(newProdPackSize) || 1);
-    const sellingPrice = Math.max(0, Number(newProdSellingPrice) || 0);
+    const sellingPrice = Math.max(0, parseRupiahInput(newProdSellingPrice));
     const costPerPack = newProdIsCostUnknown || !newProdCostPerPack.trim()
       ? null
-      : Math.max(0, Number(newProdCostPerPack) || 0);
+      : Math.max(0, parseRupiahInput(newProdCostPerPack));
 
     const newProduct = {
       id: `prod-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
@@ -561,6 +650,7 @@ export default function App() {
     if (ok) {
       setNewProdName('');
       setNewProdCostPerPack('');
+      setNewProdSellingPrice('');
       setNewProdIsCostUnknown(false);
       setShowAddProductModal(false);
       setSelectedProduct(newProduct);
@@ -653,17 +743,29 @@ export default function App() {
           : 'Sisa fisik sesuai atau lebih besar dari catatan. Tidak ada penjualan yang dihitung.',
         previousPayload: previousSnapshot,
       });
-      setStockCounts({});
+
+      // Tandai item yang sudah dicek hari ini, dan jangan reset hitungan kembali ke 0
+      const newlyChecked = new Set(checkedTodayIds);
+      entries.forEach(([pId]) => newlyChecked.add(pId));
+      setCheckedTodayIds(newlyChecked);
     }
   };
 
   const handleSaveDeposit = async () => {
-    const discrepancy = receivedAmount - expectedAmount;
+    const isCashCounted = receivedAmountInput !== null || Object.values(denominations).some(v => v > 0);
+    if (!isCashCounted) {
+      showToast('Harap hitung atau isi nominal uang fisik terlebih dahulu.');
+      return;
+    }
+
+    const actualReceived = receivedAmount;
+    const expected = storeSummary.expectedDeposit;
+    const discrepancy = actualReceived - expected;
     const depositItem: DepositRecord = {
       id: `dep-${Date.now()}`,
-      occurredAt: new Date().toISOString(),
-      expectedAmount,
-      receivedAmount,
+      occurredAt: depositDateIso || new Date().toISOString(),
+      expectedAmount: expected,
+      receivedAmount: actualReceived,
       discrepancy,
       notes: depositNote.trim() ? `${depositDate} — ${depositNote.trim()}` : depositDate,
     };
@@ -679,8 +781,8 @@ export default function App() {
       setSaveResultModal({
         isOpen: true,
         title: 'Setoran Karyawan Berhasil Disimpan',
-        salesRevenue: expectedAmount,
-        notes: `Uang diterima: Rp ${new Intl.NumberFormat('id-ID').format(receivedAmount)} · Selisih: ${
+        salesRevenue: expected,
+        notes: `Uang diterima: Rp ${new Intl.NumberFormat('id-ID').format(actualReceived)} · Selisih: ${
           discrepancy === 0
             ? 'Cocok (Rp 0)'
             : discrepancy < 0
@@ -691,6 +793,7 @@ export default function App() {
       });
       setDepositNote('');
       setReceivedAmountInput(null);
+      setDenominations({ 100000: 0, 50000: 0, 20000: 0, 10000: 0, 5000: 0, 2000: 0, 1000: 0 });
     }
   };
 
@@ -713,7 +816,8 @@ export default function App() {
       showToast('Nama pengeluaran tidak boleh kosong.');
       return;
     }
-    if (expenseAmount <= 0) {
+    const nominal = parseRupiahInput(expenseAmountStr) || expenseAmount;
+    if (nominal <= 0) {
       showToast('Nominal pengeluaran harus lebih besar dari Rp 0.');
       return;
     }
@@ -722,8 +826,8 @@ export default function App() {
       id: `exp-${Date.now()}`,
       occurredAt: new Date().toISOString(),
       description: trimmed,
-      amount: expenseAmount,
-      sourceMoney: 'STORE',
+      amount: nominal,
+      sourceMoney: expenseSourceMoney,
     };
 
     const nextPayload: TokoSakalaPayload = {
@@ -731,11 +835,41 @@ export default function App() {
       expenses: [newExpense, ...docPayload.expenses],
     };
 
-    const ok = await executeSaveTransaction(nextPayload, 'Biaya operasional toko');
+    const ok = await executeSaveTransaction(nextPayload, `Biaya: ${trimmed}`);
     if (ok) {
       setExpenseName('');
       setExpenseAmount(0);
-      setCurrentScreen('beranda');
+      setExpenseAmountStr('');
+    }
+  };
+
+  const handleSaveWithdrawal = async () => {
+    const nominal = parseRupiahInput(withdrawAmountStr);
+    if (nominal <= 0) {
+      showToast('Nominal pengambilan harus lebih besar dari Rp 0.');
+      return;
+    }
+
+    const newWd: OwnerWithdrawalRecord = {
+      id: `wd-${Date.now()}`,
+      occurredAt: new Date().toISOString(),
+      amount: nominal,
+      notes: withdrawNote.trim() || 'Pengambilan pemilik',
+    };
+
+    const nextPayload: TokoSakalaPayload = {
+      ...docPayload,
+      ownerWithdrawals: [newWd, ...(docPayload.ownerWithdrawals || [])],
+    };
+
+    const ok = await executeSaveTransaction(
+      nextPayload,
+      `Ambil Uang Pribadi: Rp ${new Intl.NumberFormat('id-ID').format(nominal)}`
+    );
+    if (ok) {
+      setShowWithdrawModal(false);
+      setWithdrawAmountStr('');
+      setWithdrawNote('');
     }
   };
 
@@ -862,6 +996,18 @@ export default function App() {
         time: new Date(s.occurredAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
         type: 'sale',
         occurredAt: s.occurredAt,
+      });
+    });
+
+    (docPayload.ownerWithdrawals || []).forEach(w => {
+      list.push({
+        id: w.id,
+        title: 'Ambil uang pribadi',
+        subtitle: w.notes || 'Pengambilan pemilik',
+        amount: w.amount,
+        time: new Date(w.occurredAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        type: 'expense',
+        occurredAt: w.occurredAt,
       });
     });
 
@@ -1077,61 +1223,231 @@ export default function App() {
         )}
 
         {/* ======================================================== */}
+        {/* ======================================================== */}
         {/* SCREEN 1: BERANDA                                        */}
         {/* ======================================================== */}
         {currentScreen === 'beranda' && (
           <div>
-            <div className="intro-greeting">
-              <h1>Halo, {docPayload.settings?.shopName ? `Juragan ${docPayload.settings.shopName}` : 'Juragan'} 👋</h1>
-              <p>
-                {storeSummary.grossSales.min > 0
-                  ? `Penjualan aktif Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)} • Semangat jualannya!`
-                  : 'Semangat jualannya hari ini! Catat transaksi untuk mengaktifkan perhitungan otomatis.'}
-              </p>
+            <div className="intro-greeting" style={{ marginBottom: '12px' }}>
+              <h1 style={{ fontSize: '20px', fontWeight: 900, margin: '0 0 2px 0' }}>Halo, Juragan 👋</h1>
             </div>
 
-            {/* Hero Card: Dihitung Dinamis dari Kejadian Toko Riil */}
-            <div className="hero-card">
-              <div className="hero-pill-badge">
-                <span className="dot" />
-                <span>
-                  {storeSummary.certainty === 'PASTI'
-                    ? 'Pasti'
-                    : storeSummary.certainty === 'PERLU_DIPERIKSA'
-                    ? 'Perlu diperiksa'
-                    : 'Belum diketahui'}
-                </span>
-              </div>
-              <h2 className="hero-card-title">
-                {storeSummary.grossSales.min === 0 && storeSummary.totalDeposits === 0
-                  ? 'Belum ada penjualan tercatat'
-                  : storeSummary.expectedDeposit > 0
-                  ? 'Setoran karyawan siap diserahkan'
-                  : 'Kas setoran toko seimbang'}
-              </h2>
-              <p className="hero-card-subtitle">
-                {storeSummary.grossSales.min === 0 && storeSummary.totalDeposits === 0
-                  ? 'Lakukan cek sisa stok untuk menghitung barang terjual & uang setoran'
-                  : 'Dihitung dari sisa stok terjual dikurangi belanja & biaya toko'}
-              </p>
-              <div className="hero-card-bottom">
-                <div className="hero-amount">
-                  Rp {new Intl.NumberFormat('id-ID').format(storeSummary.expectedDeposit)}
+            {/* Hero Card: Sisa disetor or Setoran lengkap */}
+            {storeSummary.remainingDeposit > 0 ? (
+              <div className="hero-card" style={{ marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 800, color: '#fff' }}>Sisa disetor</span>
+                    <InfoButton
+                      onClick={() => setDetailModal({
+                        title: 'Sisa Disetor',
+                        formula: 'Setoran seharusnya − Setoran diterima sebelumnya',
+                        rows: [
+                          { label: 'Setoran seharusnya', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expectedDeposit)}` },
+                          { label: 'Setoran diterima', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}`, isNegative: true },
+                          { label: 'Sisa disetor', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.remainingDeposit)}`, isHighlight: true },
+                        ],
+                        note: 'Uang penjualan dikurangi biaya laci kasir yang belum disetor ke pemilik.',
+                      })}
+                      label="Rincian sisa disetor"
+                    />
+                  </div>
+
+                  {storeSummary.certainty !== 'PASTI' && storeSummary.reviewReason && (
+                    <span className="hero-pill-badge" style={{ background: 'rgba(255,255,255,0.92)', color: 'var(--ink)' }}>
+                      <span className="dot" style={{ background: 'var(--orange)' }} />
+                      <span>{storeSummary.reviewReason}</span>
+                    </span>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  className="hero-arrow-btn"
-                  onClick={() => {
-                    if (storeSummary.grossSales.min === 0 && storeSummary.totalDeposits === 0) {
-                      setCurrentScreen('stok');
-                    } else {
-                      setCurrentScreen('setoran');
-                    }
-                  }}
-                  aria-label={storeSummary.grossSales.min === 0 ? 'Buka cek stok' : 'Periksa setoran'}
-                >
-                  <ArrowRight size={20} />
-                </button>
+
+                <div className="hero-card-bottom">
+                  <div className="hero-amount" style={{ color: '#fff' }}>
+                    {storeSummary.certainty !== 'PASTI' && storeSummary.grossSales.min !== storeSummary.grossSales.max ? '≈ ' : ''}
+                    Rp {new Intl.NumberFormat('id-ID').format(storeSummary.remainingDeposit)}
+                  </div>
+                  <button
+                    type="button"
+                    className="hero-arrow-btn"
+                    onClick={() => setCurrentScreen('setoran')}
+                    aria-label="Buka setoran kasir"
+                  >
+                    <ArrowRight size={20} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="form-card" style={{ marginBottom: '12px', background: 'var(--paper)', border: '2px solid var(--line)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <CheckCircle2 size={20} color="var(--green)" />
+                    <strong style={{ fontSize: '15px' }}>Setoran lengkap</strong>
+                    <InfoButton
+                      onClick={() => setDetailModal({
+                        title: 'Setoran Lengkap',
+                        formula: 'Setoran seharusnya − Setoran diterima = Rp 0',
+                        rows: [
+                          { label: 'Setoran seharusnya', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expectedDeposit)}` },
+                          { label: 'Setoran diterima', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}` },
+                          { label: 'Sisa disetor', value: 'Rp 0', isHighlight: true },
+                        ],
+                        note: 'Semua kewajiban uang setoran telah diterima lengkap.',
+                      })}
+                      label="Rincian setoran lengkap"
+                    />
+                  </div>
+
+                  {storeSummary.certainty !== 'PASTI' && storeSummary.reviewReason && (
+                    <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: 'var(--amber-pale)', color: 'var(--ink)' }}>
+                      {storeSummary.reviewReason}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+                  Semua setoran kas toko sudah diterima pemilik.
+                </div>
+              </div>
+            )}
+
+            {/* Tiga Kartu Kecil: Penjualan, Untung, Uang di tangan */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '12px' }}>
+              <div className="form-card" style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 700 }}>Penjualan</span>
+                  <InfoButton
+                    size={13}
+                    onClick={() => {
+                      const breakdown = catalogList.map(item => {
+                        const sold = storeSummary.stockByProduct.get(item.id)?.unitsSold || 0;
+                        return {
+                          name: item.name,
+                          calculation: `${sold} pcs × Rp ${new Intl.NumberFormat('id-ID').format(item.sellingPricePerUnit)}`,
+                          total: `Rp ${new Intl.NumberFormat('id-ID').format(sold * item.sellingPricePerUnit)}`,
+                        };
+                      }).filter(i => !i.total.includes('Rp 0'));
+
+                      setDetailModal({
+                        title: 'Penjualan',
+                        formula: 'Σ (terjual × harga jual)',
+                        rows: [
+                          { label: 'Total Penjualan', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}`, isHighlight: true },
+                        ],
+                        note: 'Dihitung dari selisih cek sisa stok fisik toko.',
+                        showItemsLink: breakdown.length > 0,
+                        itemsBreakdown: breakdown,
+                      });
+                    }}
+                    label="Rincian Penjualan"
+                  />
+                </div>
+                <strong style={{ fontSize: '12px', marginTop: '4px', wordBreak: 'break-word' }}>
+                  {storeSummary.grossSales.min !== storeSummary.grossSales.max ? '≈ ' : ''}
+                  Rp {new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}
+                </strong>
+              </div>
+
+              <div className="form-card" style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 700 }}>Untung</span>
+                  <InfoButton
+                    size={13}
+                    onClick={() => setDetailModal({
+                      title: 'Untung Bersih',
+                      formula: 'Untung kotor − Seluruh biaya toko',
+                      rows: [
+                        { label: 'Penjualan', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}` },
+                        { label: 'Modal terjual', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cogsKnown)}`, isNegative: true },
+                        { label: 'Untung kotor', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossProfit ? storeSummary.grossProfit.min : 0)}` },
+                        { label: 'Biaya toko', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expensesTotal)}`, isNegative: true },
+                        { label: 'Untung bersih', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.netProfit ? storeSummary.netProfit.min : 0)}`, isHighlight: true },
+                      ],
+                      note: storeSummary.cogsKnown === 0 && storeSummary.grossSales.min > 0 ? 'Sebagian modal barang belum diketahui.' : undefined,
+                    })}
+                    label="Rincian Untung"
+                  />
+                </div>
+                <strong style={{ fontSize: '12px', marginTop: '4px', wordBreak: 'break-word', color: (storeSummary.netProfit?.min ?? 0) >= 0 ? 'var(--ink)' : 'var(--red)' }}>
+                  {storeSummary.netProfit ? (
+                    <>
+                      {storeSummary.netProfit.min !== storeSummary.netProfit.max ? '≈ ' : ''}
+                      Rp {new Intl.NumberFormat('id-ID').format(storeSummary.netProfit.min)}
+                    </>
+                  ) : (
+                    <span style={{ fontSize: '10px', color: 'var(--muted)' }}>Belum pasti</span>
+                  )}
+                </strong>
+              </div>
+
+              <div className="form-card" style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 700 }}>Uang di tangan</span>
+                  <InfoButton
+                    size={13}
+                    onClick={() => setDetailModal({
+                      title: 'Uang di Tangan Pemilik',
+                      formula: 'Setoran diterima − Belanja dari setoran − Pengambilan pribadi',
+                      rows: [
+                        { label: 'Setoran diterima', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}` },
+                        { label: 'Belanja dari setoran', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.purchasesFromSetoran)}`, isNegative: true },
+                        { label: 'Pengambilan pribadi', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.ownerWithdrawalsTotal)}`, isNegative: true },
+                        { label: 'Uang di tangan', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}`, isHighlight: true },
+                      ],
+                      note: 'Arus uang tunai riil yang saat ini dipegang pemilik toko.',
+                    })}
+                    label="Rincian Uang di tangan"
+                  />
+                </div>
+                <strong style={{ fontSize: '12px', marginTop: '4px', wordBreak: 'break-word', color: storeSummary.cashInHand >= 0 ? 'var(--ink)' : 'var(--red)' }}>
+                  Rp {new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}
+                </strong>
+              </div>
+            </div>
+
+            {/* Satu Kartu: Perputaran Modal */}
+            <div className="form-card" style={{ marginBottom: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <h3 className="form-card-title" style={{ margin: 0, fontSize: '12px' }}>Perputaran Modal</h3>
+                <InfoButton
+                  size={14}
+                  onClick={() => setDetailModal({
+                    title: 'Perputaran Modal',
+                    formula: 'Modal kembali − Total belanja',
+                    rows: [
+                      { label: 'Modal kembali (HPP terjual)', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.modalKembali)}` },
+                      { label: 'Dipakai belanja', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalPurchases)}`, isNegative: true },
+                      {
+                        label: 'Sisa dana belanja',
+                        value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.remainingShoppingBudget)}`,
+                        isHighlight: true,
+                        isNegative: storeSummary.remainingShoppingBudget < 0,
+                      },
+                    ],
+                    note: storeSummary.remainingShoppingBudget < 0
+                      ? 'Belanja melebihi modal yang kembali. Dana belanja diambil dari untung.'
+                      : 'Dana modal kembali masih cukup untuk perputaran belanja berikutnya.',
+                  })}
+                  label="Rincian Perputaran Modal"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '11px' }}>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '10px' }}>Modal kembali</span>
+                  <strong style={{ fontSize: '12px' }}>Rp {new Intl.NumberFormat('id-ID').format(storeSummary.modalKembali)}</strong>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '10px' }}>Dipakai belanja</span>
+                  <strong style={{ fontSize: '12px' }}>Rp {new Intl.NumberFormat('id-ID').format(storeSummary.totalPurchases)}</strong>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '10px' }}>Sisa dana</span>
+                  <strong style={{ fontSize: '12px', color: storeSummary.remainingShoppingBudget < 0 ? 'var(--red)' : 'var(--ink)' }}>
+                    Rp {new Intl.NumberFormat('id-ID').format(storeSummary.remainingShoppingBudget)}
+                  </strong>
+                  {storeSummary.remainingShoppingBudget < 0 && (
+                    <span style={{ fontSize: '9px', color: 'var(--red)', display: 'block' }}>(diambil dari untung)</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1292,7 +1608,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* Search Bar with Filter Button */}
+            {/* Search Bar with Sort Button */}
             <div className="search-wrapper">
               <div className="search-input-box">
                 <Search className="search-icon" size={17} />
@@ -1307,10 +1623,12 @@ export default function App() {
               <button
                 type="button"
                 className="filter-action-btn"
-                aria-label="Filter kategori"
-                onClick={() => showToast('Gunakan tab kategori di bawah untuk menyaring barang.')}
+                aria-label="Urutkan barang"
+                onClick={() => setCatatSort(prev => prev === 'terbaru' ? 'alphabetical' : 'terbaru')}
+                title={catatSort === 'terbaru' ? 'Urutkan A–Z' : 'Urutkan Terbaru'}
+                style={{ background: catatSort === 'alphabetical' ? 'var(--amber-pale)' : undefined }}
               >
-                <SlidersHorizontal size={18} />
+                <ArrowUpDown size={18} />
               </button>
             </div>
 
@@ -1330,154 +1648,194 @@ export default function App() {
 
             {/* Product Selection List */}
             <div className="product-select-list">
-              {catalogList.filter((p) => {
-                const matchCat = catatCategory === 'Semua' || p.category === catatCategory;
-                const matchQuery = p.name.toLowerCase().includes(catatSearch.toLowerCase());
-                return matchCat && matchQuery;
-              }).slice(0, 8).map((item) => (
-                <div
-                  key={item.id}
-                  className={`product-select-card ${selectedProduct.id === item.id ? 'active' : ''}`}
-                  onClick={() => {
-                    setSelectedProduct(item);
-                    showToast(`Memilih ${item.name}`);
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setSelectedProduct(item);
-                    }
-                  }}
-                  style={{
-                    cursor: 'pointer',
-                    outline: selectedProduct.id === item.id ? '2px solid var(--orange)' : undefined,
-                  }}
-                  aria-label={`Pilih ${item.name}`}
-                >
-                  <div className="product-thumb-image" aria-hidden="true">
-                    {item.icon}
-                  </div>
-                  <div className="product-info-text">
-                    <strong className="product-info-name">{item.name}</strong>
-                    <span className="product-info-meta">
-                      {item.category} · {item.unit}
-                    </span>
-                    {item.costPerPack !== null ? (
-                      <strong className="product-info-price">
-                        Rp {new Intl.NumberFormat('id-ID').format(item.costPerPack)}
-                      </strong>
-                    ) : (
-                      <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700, display: 'inline-block', width: 'fit-content' }}>
-                        Modal: Belum diketahui
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className="add-circle-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
+              {catalogList
+                .filter((p) => {
+                  const matchCat = catatCategory === 'Semua' || p.category === catatCategory;
+                  const matchQuery = p.name.toLowerCase().includes(catatSearch.toLowerCase());
+                  return matchCat && matchQuery;
+                })
+                .sort((a, b) => {
+                  if (catatSort === 'alphabetical') return a.name.localeCompare(b.name);
+                  return 0;
+                })
+                .slice(0, 8)
+                .map((item) => (
+                  <div
+                    key={item.id}
+                    className={`product-select-card ${selectedProduct.id === item.id ? 'active' : ''}`}
+                    onClick={() => {
                       setSelectedProduct(item);
                       showToast(`Memilih ${item.name}`);
                     }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedProduct(item);
+                      }
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      outline: selectedProduct.id === item.id ? '2px solid var(--orange)' : undefined,
+                    }}
                     aria-label={`Pilih ${item.name}`}
                   >
-                    <Plus size={20} />
-                  </button>
-                </div>
-              ))}
+                    <div className="product-thumb-image" aria-hidden="true">
+                      {item.icon}
+                    </div>
+                    <div className="product-info-text">
+                      <strong className="product-info-name">{item.name}</strong>
+                      <span className="product-info-meta">
+                        {item.category} · {item.unit}
+                      </span>
+                      {item.costPerPack !== null ? (
+                        <strong className="product-info-price">
+                          Rp {new Intl.NumberFormat('id-ID').format(item.costPerPack)}
+                        </strong>
+                      ) : (
+                        <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700, display: 'inline-block', width: 'fit-content' }}>
+                          Modal: Belum diketahui
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="add-circle-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedProduct(item);
+                        showToast(`Memilih ${item.name}`);
+                      }}
+                      aria-label={`Pilih ${item.name}`}
+                    >
+                      <Plus size={20} />
+                    </button>
+                  </div>
+                ))}
             </div>
 
             {/* Form Section: Jumlah & Satuan */}
-            <div className="form-card">
-              <h3 className="form-card-title">Jumlah & satuan</h3>
-              <div className="form-row-pair">
-                <div className="field-group">
-                  <label htmlFor="p-qty" className="field-label">Jumlah</label>
-                  <input
-                    id="p-qty"
-                    type="number"
-                    min="1"
-                    className="field-input"
-                    value={purchaseQty}
-                    onChange={(e) => setPurchaseQty(Math.max(1, Number(e.target.value) || 1))}
-                  />
-                </div>
-                <div className="field-group">
-                  <label htmlFor="p-unit" className="field-label">Satuan</label>
-                  <select
-                    id="p-unit"
-                    className="field-select"
-                    value={purchaseUnit}
-                    onChange={(e) => setPurchaseUnit(e.target.value)}
-                  >
-                    <option value="dus">{selectedProduct.unit}</option>
-                    <option value="pak">Pak ({Math.max(1, Math.floor(selectedProduct.packSize / 4))} pcs)</option>
-                    <option value="pcs">Pcs (satuan isi)</option>
-                  </select>
-                </div>
-              </div>
+            {/* Form Section: Jumlah & Satuan */}
+            {(() => {
+              const isKemasan = purchaseUnit !== 'pcs';
+              const piecesToAdd = isKemasan ? purchaseQty * selectedProduct.packSize : purchaseQty;
+              const totalCost = selectedProduct.costPerPack !== null
+                ? (isKemasan
+                    ? purchaseQty * selectedProduct.costPerPack
+                    : Math.round((purchaseQty * selectedProduct.costPerPack) / selectedProduct.packSize))
+                : parseRupiahInput(customPurchaseCost);
 
-              {/* Ringkasan Pembelian Box */}
-              <div className="summary-box">
-                <div className="summary-box-title">Ringkasan pembelian & dampak stok</div>
-                <div className="summary-box-row">
-                  <span>Konversi stok fisik masuk</span>
-                  <strong style={{ color: 'var(--green)' }}>+{purchaseQty * selectedProduct.packSize} pcs</strong>
-                </div>
-
-                {selectedProduct.costPerPack !== null ? (
-                  <>
-                    <div className="summary-box-row">
-                      <span>Harga per kemasan</span>
-                      <span>Rp {new Intl.NumberFormat('id-ID').format(selectedProduct.costPerPack)}</span>
+              return (
+                <div className="form-card">
+                  <h3 className="form-card-title">Jumlah & Satuan</h3>
+                  <div className="form-row-pair" style={{ marginBottom: '12px' }}>
+                    <div className="field-group">
+                      <label htmlFor="p-qty" className="field-label">Jumlah</label>
+                      <input
+                        id="p-qty"
+                        type="number"
+                        min="1"
+                        className="field-input"
+                        value={purchaseQty}
+                        onChange={(e) => setPurchaseQty(Math.max(1, Number(e.target.value) || 1))}
+                      />
                     </div>
-                    <div className="summary-box-row" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
-                      <span style={{ fontWeight: 800, color: 'var(--ink)' }}>Total belanja</span>
-                      <strong style={{ fontSize: '15px' }}>
-                        Rp {new Intl.NumberFormat('id-ID').format(purchaseQty * selectedProduct.costPerPack)}
-                      </strong>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 800 }}>Nominal Belanja Nota (Rp):</span>
-                      <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
-                        Modal belum diisi di katalog
-                      </span>
-                    </div>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1000"
-                      className="field-input"
-                      placeholder="Masukkan total belanja nota riil..."
-                      value={customPurchaseCost}
-                      onChange={(e) => setCustomPurchaseCost(e.target.value)}
-                      style={{ width: '100%', boxSizing: 'border-box', marginBottom: '6px' }}
-                    />
-                    <div className="summary-box-row">
-                      <span style={{ fontWeight: 800, color: 'var(--ink)' }}>Total belanja nota</span>
-                      <strong style={{ fontSize: '15px' }}>
-                        Rp {new Intl.NumberFormat('id-ID').format(Number(customPurchaseCost) || 0)}
-                      </strong>
+                    <div className="field-group">
+                      <label htmlFor="p-unit" className="field-label">Satuan</label>
+                      <select
+                        id="p-unit"
+                        className="field-select"
+                        value={purchaseUnit}
+                        onChange={(e) => setPurchaseUnit(e.target.value)}
+                      >
+                        <option value="kemasan">{selectedProduct.unit}</option>
+                        <option value="pcs">Pcs (satuan isi)</option>
+                      </select>
                     </div>
                   </div>
-                )}
-              </div>
 
-              {/* CTA: Simpan Pembelian ke Penyimpanan */}
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleSavePurchase}
-              >
-                Simpan Pembelian Belanja (+{purchaseQty * selectedProduct.packSize} pcs) →
-              </button>
-            </div>
+                  {/* Sumber Uang Belanja */}
+                  <div style={{ marginBottom: '14px' }}>
+                    <label className="field-label" style={{ display: 'block', marginBottom: '6px' }}>Sumber Uang</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className={`filter-chip ${purchaseSourceMoney === 'SETORAN' ? 'active' : ''}`}
+                        onClick={() => {
+                          setPurchaseSourceMoney('SETORAN');
+                          if (typeof localStorage !== 'undefined') localStorage.setItem('toko_sakala_belanja_source', 'SETORAN');
+                        }}
+                      >
+                        Dari setoran (diputar)
+                      </button>
+                      <button
+                        type="button"
+                        className={`filter-chip ${purchaseSourceMoney === 'PRIBADI' ? 'active' : ''}`}
+                        onClick={() => {
+                          setPurchaseSourceMoney('PRIBADI');
+                          if (typeof localStorage !== 'undefined') localStorage.setItem('toko_sakala_belanja_source', 'PRIBADI');
+                        }}
+                      >
+                        Uang lain (pribadi)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Jika modal kemasan belum ada di master katalog */}
+                  {selectedProduct.costPerPack === null && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <label htmlFor="p-custom-cost" className="field-label" style={{ display: 'block', marginBottom: '4px' }}>
+                        Nominal Belanja Nota (Rp)
+                      </label>
+                      <input
+                        id="p-custom-cost"
+                        type="text"
+                        className="field-input"
+                        placeholder="Contoh: 150.000"
+                        value={customPurchaseCost ? formatRupiahInput(customPurchaseCost) : ''}
+                        onChange={(e) => setCustomPurchaseCost(e.target.value)}
+                        style={{ width: '100%', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Ringkasan Satu Baris dengan ⓘ */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f4f4f5', borderRadius: '8px', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--ink)' }}>
+                        +{piecesToAdd} pcs · Rp {new Intl.NumberFormat('id-ID').format(totalCost)}
+                      </span>
+                    </div>
+                    <InfoButton
+                      onClick={() => setDetailModal({
+                        title: 'Ringkasan Belanja',
+                        formula: isKemasan ? 'jumlah × harga kemasan' : 'jumlah × (harga kemasan ÷ isi per kemasan)',
+                        rows: [
+                          { label: 'Jumlah barang', value: `${purchaseQty} ${isKemasan ? selectedProduct.unit : 'pcs'}` },
+                          { label: 'Konversi fisik masuk', value: `+${piecesToAdd} pcs` },
+                          { label: 'Harga per satuan', value: `Rp ${new Intl.NumberFormat('id-ID').format(isKemasan ? (selectedProduct.costPerPack ?? 0) : Math.round((selectedProduct.costPerPack ?? 0) / selectedProduct.packSize))}` },
+                          { label: 'Total belanja', value: `Rp ${new Intl.NumberFormat('id-ID').format(totalCost)}`, isHighlight: true },
+                          { label: 'Sumber dana', value: purchaseSourceMoney === 'SETORAN' ? 'Uang setoran diputar' : 'Uang lain/pribadi' },
+                        ],
+                        note: 'Belanja dari uang setoran tidak memotong kewajiban setoran karyawan di laci toko.',
+                      })}
+                      label="Rincian ringkasan belanja"
+                    />
+                  </div>
+
+                  {/* CTA: Simpan Pembelian ke Penyimpanan */}
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSavePurchase}
+                    style={{ width: '100%', minHeight: '44px' }}
+                  >
+                    Simpan Belanja (+{piecesToAdd} pcs) →
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1556,27 +1914,47 @@ export default function App() {
                   ? `${Math.floor(currentAvailable / item.packSize)} ${item.unit.split(' ')[0]}${currentAvailable % item.packSize > 0 ? ` + ${currentAvailable % item.packSize} pcs` : ''}`
                   : null;
 
+                const isCheckedToday = checkedTodayIds.has(item.id);
+                const physicalVal = isFilled ? Number(count) : currentAvailable;
+                const soldVal = Math.max(0, currentAvailable - physicalVal);
+
                 return (
-                  <div key={item.id} className="stock-check-card" style={{ padding: '12px' }}>
-                    <div className="stock-card-top" style={{ alignItems: 'flex-start' }}>
-                      <div className="product-thumb-image" aria-hidden="true" style={{ marginTop: '2px' }}>
+                  <div key={item.id} className="stock-check-card" style={{ padding: '10px 12px' }}>
+                    <div className="stock-card-top" style={{ alignItems: 'center' }}>
+                      <div className="product-thumb-image" aria-hidden="true">
                         {item.icon}
                       </div>
                       <div className="stock-card-body">
-                        <div className="stock-card-title">
+                        <div className="stock-card-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span style={{ fontWeight: 900 }}>{item.name}</span>
-                          <span className={`status-tag ${statusClass}`}>{statusLabel}</span>
+                          {isCheckedToday && (
+                            <span className="status-tag good" style={{ fontSize: '10px', padding: '1px 6px' }}>
+                              ✓ Dicek hari ini
+                            </span>
+                          )}
                         </div>
-                        <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
-                          <span style={{ fontWeight: 800, color: 'var(--ink)' }}>Catatan: {currentAvailable} pcs</span>
-                          {packHelper && <span> ({packHelper})</span>}
-                        </div>
-                        <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '1px' }}>
-                          Harga jual: Rp {new Intl.NumberFormat('id-ID').format(item.sellingPricePerUnit)} / pcs
+                        <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>Catatan: {currentAvailable} pcs</span>
+                          <InfoButton
+                            size={13}
+                            onClick={() => setDetailModal({
+                              title: `Cek Sisa — ${item.name}`,
+                              formula: 'Terjual = Catatan − Sisa fisik',
+                              rows: [
+                                { label: 'Catatan stok', value: `${currentAvailable} pcs` },
+                                { label: 'Sisa fisik diinput', value: `${physicalVal} pcs` },
+                                { label: 'Terjual', value: `${soldVal} pcs`, isHighlight: true },
+                                { label: 'Penjualan', value: `Rp ${new Intl.NumberFormat('id-ID').format(soldVal * item.sellingPricePerUnit)}` },
+                              ],
+                              note: soldVal > 0
+                                ? `Menghasilkan estimasi penjualan Rp ${new Intl.NumberFormat('id-ID').format(soldVal * item.sellingPricePerUnit)}.`
+                                : 'Tidak ada penjualan baru yang dihitung.',
+                            })}
+                            label={`Rincian stok ${item.name}`}
+                          />
                         </div>
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
-                        <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--muted)' }}>Sisa fisik (pcs)</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
                         <div className="stepper-control">
                           <button
                             type="button"
@@ -1595,11 +1973,10 @@ export default function App() {
                             type="text"
                             className="stepper-input"
                             aria-label={`Sisa fisik ${item.name}`}
-                            value={isFilled ? count : '—'}
-                            placeholder={String(currentAvailable)}
+                            value={isFilled ? count : currentAvailable}
                             onChange={(e) => {
                               const val = e.target.value.trim();
-                              if (val === '' || val === '—') {
+                              if (val === '') {
                                 setStockCounts(prev => ({ ...prev, [item.id]: null }));
                               } else {
                                 const num = parseInt(val, 10);
@@ -1625,43 +2002,6 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-
-                    {/* Real-time Sales & Profit Preview */}
-                    {isFilled && (
-                      <div style={{
-                        marginTop: '8px',
-                        paddingTop: '6px',
-                        borderTop: '1px dashed var(--line)',
-                        fontSize: '11px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}>
-                        {previewSold > 0 ? (
-                          <>
-                            <span style={{ color: 'var(--ink)', fontWeight: 700 }}>
-                              Terjual: <strong>{previewSold} pcs</strong> (+Rp {new Intl.NumberFormat('id-ID').format(previewRevenue)})
-                            </span>
-                            <span style={{
-                              fontWeight: 800,
-                              color: previewGrossProfit !== null ? 'var(--green)' : 'var(--amber)'
-                            }}>
-                              {previewGrossProfit !== null
-                                ? `Laba: ~Rp ${new Intl.NumberFormat('id-ID').format(previewGrossProfit)}`
-                                : 'Modal belum diisi'}
-                            </span>
-                          </>
-                        ) : Number(count) > currentAvailable ? (
-                          <span style={{ color: 'var(--amber)', fontSize: '10px' }}>
-                            Sisa fisik melebihi catatan (+{Number(count) - currentAvailable} pcs). Tidak dibuat penjualan negatif.
-                          </span>
-                        ) : (
-                          <span style={{ color: 'var(--muted)', fontSize: '10px' }}>
-                            Sisa fisik pas dengan catatan (tidak ada barang terjual).
-                          </span>
-                        )}
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -1688,147 +2028,320 @@ export default function App() {
         )}
 
         {/* ======================================================== */}
+        {/* ======================================================== */}
         {/* SCREEN 4: SETORAN KARYAWAN                               */}
         {/* ======================================================== */}
-        {currentScreen === 'setoran' && (
-          <div>
-            {/* Date Selector Row */}
-            <div
-              className="date-selector-row"
-              onClick={() => {
-                setCustomDateInput(new Date().toISOString().split('T')[0]);
-                setShowDateModal(true);
-              }}
-              role="button"
-              tabIndex={0}
-              aria-label="Pilih tanggal setoran"
-              style={{ cursor: 'pointer' }}
-            >
-              <div className="date-selector-left">
-                <Calendar size={18} />
-                <span>{depositDate}</span>
-              </div>
-              <ChevronRight size={18} color="var(--muted)" />
-            </div>
+        {currentScreen === 'setoran' && (() => {
+          const isCashCounted = receivedAmountInput !== null || Object.values(denominations).some(v => v > 0);
+          const actualReceived = receivedAmountInput ?? 0;
+          const discrepancy = actualReceived - expectedAmount;
 
-            {/* Warning Callout Box */}
-            <div className="warning-callout">
-              <div className="warning-callout-icon">!</div>
-              <div>Periksa kembali jumlah setoran dengan perhitungan toko.</div>
-            </div>
+          let statusTag = 'Menunggu hitung';
+          let statusColor = 'var(--muted)';
+          let statusBg = '#f4f4f5';
 
-            {/* 3 Settlement Cards */}
-            <div className="settlement-card-list">
-              {/* Card 1: Uang yang seharusnya diserahkan */}
-              <div
-                className="settlement-card"
-                onClick={() => setShowCalculationWhyModal(true)}
-                role="button"
-                tabIndex={0}
-                style={{ cursor: 'pointer' }}
-              >
-                <div className="settlement-icon-box">
-                  <FileText size={20} />
-                </div>
-                <div className="settlement-card-body">
-                  <div className="settlement-card-label">
-                    Uang yang seharusnya diserahkan (kas siap setor)
-                  </div>
-                  <div className="settlement-card-amount">
-                    Rp {new Intl.NumberFormat('id-ID').format(expectedAmount)}
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--blue)', marginTop: '4px', fontWeight: 800 }}>
-                    Kenapa angka ini? Ketuk untuk rincian hitungan →
-                  </div>
-                </div>
-                <ChevronRight className="settlement-card-chevron" />
-              </div>
+          if (isCashCounted) {
+            if (storeSummary.certainty !== 'PASTI') {
+              statusTag = `Perlu diperiksa · ${storeSummary.reviewReason || 'Periksa data'}`;
+              statusColor = 'var(--orange)';
+              statusBg = 'var(--amber-pale)';
+            } else if (actualReceived === expectedAmount) {
+              statusTag = 'Cocok';
+              statusColor = 'var(--green)';
+              statusBg = '#eafbe3';
+            } else if (actualReceived < expectedAmount) {
+              statusTag = `Kurang Rp ${new Intl.NumberFormat('id-ID').format(expectedAmount - actualReceived)}`;
+              statusColor = 'var(--red)';
+              statusBg = '#ffebe6';
+            } else {
+              statusTag = `Lebih Rp ${new Intl.NumberFormat('id-ID').format(actualReceived - expectedAmount)}`;
+              statusColor = 'var(--blue)';
+              statusBg = '#e8f0fe';
+            }
+          }
 
-              {/* Card 2: Uang yang diterima */}
-              <div
-                className="settlement-card"
-                onClick={() => {
-                  setCustomAmountInput(receivedAmount.toString());
-                  setShowAmountModal(true);
-                }}
-                role="button"
-                tabIndex={0}
-                style={{ cursor: 'pointer' }}
-              >
-                <div className="settlement-icon-box">
-                  <Wallet size={20} />
-                </div>
-                <div className="settlement-card-body">
-                  <div className="settlement-card-label">
-                    Uang fisik yang diterima (dari karyawan)
-                  </div>
-                  <div className="settlement-card-amount">
-                    Rp {new Intl.NumberFormat('id-ID').format(receivedAmount)}
-                  </div>
-                  <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>
-                    Ketuk untuk mengubah nominal uang fisik di tangan
-                  </div>
-                </div>
-                <ChevronRight className="settlement-card-chevron" />
+          return (
+            <div>
+              {/* Date Chip Selector: Hari ini / Kemarin / Pilih tanggal */}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className={`filter-chip ${selectedDateTab === 'HARI_INI' ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedDateTab('HARI_INI');
+                    setDepositDate(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date()));
+                    setDepositDateIso(new Date().toISOString());
+                  }}
+                >
+                  Hari ini
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${selectedDateTab === 'KEMARIN' ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedDateTab('KEMARIN');
+                    const yest = new Date(Date.now() - 86400000);
+                    setDepositDate(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }).format(yest));
+                    setDepositDateIso(yest.toISOString());
+                  }}
+                >
+                  Kemarin
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${selectedDateTab === 'PILIH_TANGGAL' ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedDateTab('PILIH_TANGGAL');
+                    setCustomDateInput(new Date().toISOString().split('T')[0]);
+                    setShowDateModal(true);
+                  }}
+                >
+                  Pilih tanggal
+                </button>
               </div>
 
-              {/* Card 3: Selisih (perlu diperiksa) */}
-              <div
-                className={`settlement-card ${receivedAmount === expectedAmount ? 'green' : 'red'}`}
-                onClick={() => setShowDiscrepancyModal(true)}
-                role="button"
-                tabIndex={0}
-                style={{ cursor: 'pointer' }}
-              >
-                <div className="settlement-icon-box">
-                  {receivedAmount === expectedAmount ? (
-                    <CheckCircle2 size={20} color="var(--green)" />
-                  ) : (
-                    <AlertCircle size={20} color="var(--red)" />
-                  )}
-                </div>
-                <div className="settlement-card-body">
-                  <div className="settlement-card-label" style={{ color: receivedAmount === expectedAmount ? 'var(--green)' : 'var(--red)' }}>
-                    {receivedAmount === expectedAmount ? 'Status setoran (Cocok)' : 'Selisih setoran (perlu diperiksa)'}
-                  </div>
-                  <div className="settlement-card-amount" style={{ color: receivedAmount === expectedAmount ? 'var(--green)' : 'var(--red)' }}>
-                    {expectedAmount > receivedAmount
-                      ? `Kurang Rp ${new Intl.NumberFormat('id-ID').format(expectedAmount - receivedAmount)}`
-                      : expectedAmount < receivedAmount
-                      ? `Lebih Rp ${new Intl.NumberFormat('id-ID').format(receivedAmount - expectedAmount)}`
-                      : 'Rp 0 (Cocok / Pas)'}
+              {/* Status Header Box */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)' }}>Status Penyerahan</span>
+                <span style={{ fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px', background: statusBg, color: statusColor }}>
+                  {statusTag}
+                </span>
+              </div>
+
+              {/* Banner hanya muncul jika ada selisih nyata atau masalah kepastian setelah uang dihitung */}
+              {isCashCounted && (discrepancy !== 0 || storeSummary.certainty !== 'PASTI') && (
+                <div className="warning-callout" style={{ marginBottom: '12px' }}>
+                  <div className="warning-callout-icon">!</div>
+                  <div style={{ fontSize: '11px' }}>
+                    {storeSummary.certainty !== 'PASTI'
+                      ? `Perhatian: ${storeSummary.reviewReason || 'Angka penjualan belum final'}. Cek modal/cek sisa terlebih dahulu.`
+                      : discrepancy < 0
+                      ? `Uang fisik kurang Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(discrepancy))}. Tanyakan nota darurat atau uang di kasir.`
+                      : `Uang fisik lebih Rp ${new Intl.NumberFormat('id-ID').format(discrepancy)} dari perhitungan.`}
                   </div>
                 </div>
-                <ChevronRight className="settlement-card-chevron" />
+              )}
+
+              {/* Hitung Uang Fisik Terlebih Dahulu */}
+              <div className="form-card" style={{ marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h3 className="form-card-title" style={{ margin: 0, fontSize: '13px' }}>Hitung Uang Fisik</h3>
+                  <button
+                    type="button"
+                    className="btn btn-paper"
+                    onClick={() => setShowDenominations(!showDenominations)}
+                    style={{ fontSize: '11px', padding: '4px 8px', minHeight: '32px' }}
+                  >
+                    {showDenominations ? 'Tutup Pecahan' : 'Buka Stepper Pecahan'}
+                  </button>
+                </div>
+
+                <div className="field-group" style={{ marginBottom: showDenominations ? '12px' : '0' }}>
+                  <label htmlFor="dep-received-amount" className="field-label" style={{ fontSize: '11px' }}>
+                    Total Uang Fisik Diterima (Rp)
+                  </label>
+                  <input
+                    id="dep-received-amount"
+                    type="text"
+                    className="field-input"
+                    placeholder="0"
+                    value={receivedAmountInput !== null ? formatRupiahInput(receivedAmountInput.toString()) : ''}
+                    onChange={(e) => {
+                      const val = parseRupiahInput(e.target.value);
+                      setReceivedAmountInput(val);
+                    }}
+                  />
+                </div>
+
+                {showDenominations && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingTop: '10px', borderTop: '1px dashed var(--line)' }}>
+                    {[100000, 50000, 20000, 10000, 5000, 2000, 1000].map(denom => (
+                      <div key={denom} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 700 }}>
+                          Rp {new Intl.NumberFormat('id-ID').format(denom)}
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <button
+                            type="button"
+                            className="stepper-btn"
+                            aria-label={`Kurangi pecahan ${denom}`}
+                            onClick={() => {
+                              const next = { ...denominations, [denom]: Math.max(0, (denominations[denom] || 0) - 1) };
+                              setDenominations(next);
+                              const total = Object.entries(next).reduce((s, [v, c]) => s + Number(v) * c, 0);
+                              setReceivedAmountInput(total);
+                            }}
+                          >
+                            −
+                          </button>
+                          <span style={{ minWidth: '28px', textAlign: 'center', fontSize: '13px', fontWeight: 800 }}>
+                            {denominations[denom] || 0}
+                          </span>
+                          <button
+                            type="button"
+                            className="stepper-btn"
+                            aria-label={`Tambah pecahan ${denom}`}
+                            onClick={() => {
+                              const next = { ...denominations, [denom]: (denominations[denom] || 0) + 1 };
+                              setDenominations(next);
+                              const total = Object.entries(next).reduce((s, [v, c]) => s + Number(v) * c, 0);
+                              setReceivedAmountInput(total);
+                            }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 3 Settlement Cards */}
+              <div className="settlement-card-list" style={{ marginBottom: '14px' }}>
+                {/* Card 1: Seharusnya (ⓘ) */}
+                <div className="settlement-card">
+                  <div className="settlement-icon-box">
+                    <FileText size={20} />
+                  </div>
+                  <div className="settlement-card-body">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div className="settlement-card-label">Setoran Seharusnya</div>
+                      <InfoButton
+                        size={13}
+                        onClick={() => {
+                          const breakdown = catalogList.map(item => {
+                            const sold = storeSummary.stockByProduct.get(item.id)?.unitsSold || 0;
+                            return {
+                              name: item.name,
+                              calculation: `${sold} pcs × Rp ${new Intl.NumberFormat('id-ID').format(item.sellingPricePerUnit)}`,
+                              total: `Rp ${new Intl.NumberFormat('id-ID').format(sold * item.sellingPricePerUnit)}`,
+                            };
+                          }).filter(i => !i.total.includes('Rp 0'));
+
+                          setDetailModal({
+                            title: 'Setoran Seharusnya',
+                            formula: 'Penjualan − Biaya dari laci',
+                            rows: [
+                              { label: 'Penjualan riil', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}` },
+                              { label: 'Biaya laci toko', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expensesLaci)}`, isNegative: true },
+                              { label: 'Setoran seharusnya', value: `Rp ${new Intl.NumberFormat('id-ID').format(expectedAmount)}`, isHighlight: true },
+                            ],
+                            note: 'Biaya dari laci kasir mengurangi uang yang wajib diserahkan karyawan.',
+                            showItemsLink: breakdown.length > 0,
+                            itemsBreakdown: breakdown,
+                          });
+                        }}
+                        label="Rincian Setoran Seharusnya"
+                      />
+                    </div>
+                    <div className="settlement-card-amount">
+                      Rp {new Intl.NumberFormat('id-ID').format(expectedAmount)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 2: Diterima */}
+                <div className="settlement-card">
+                  <div className="settlement-icon-box">
+                    <Wallet size={20} />
+                  </div>
+                  <div className="settlement-card-body">
+                    <div className="settlement-card-label">Uang Diterima</div>
+                    <div className="settlement-card-amount">
+                      {isCashCounted ? `Rp ${new Intl.NumberFormat('id-ID').format(actualReceived)}` : 'Menunggu hitung'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 3: Selisih (ⓘ) */}
+                <div className={`settlement-card ${!isCashCounted ? '' : actualReceived === expectedAmount ? 'green' : 'red'}`}>
+                  <div className="settlement-icon-box">
+                    {!isCashCounted ? (
+                      <HelpCircle size={20} color="var(--muted)" />
+                    ) : actualReceived === expectedAmount ? (
+                      <CheckCircle2 size={20} color="var(--green)" />
+                    ) : (
+                      <AlertCircle size={20} color="var(--red)" />
+                    )}
+                  </div>
+                  <div className="settlement-card-body">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div className="settlement-card-label">Selisih Setoran</div>
+                      <InfoButton
+                        size={13}
+                        onClick={() => setDetailModal({
+                          title: 'Selisih Setoran',
+                          formula: 'Uang diterima − Setoran seharusnya',
+                          rows: [
+                            { label: 'Uang diterima', value: `Rp ${new Intl.NumberFormat('id-ID').format(actualReceived)}` },
+                            { label: 'Setoran seharusnya', value: `-Rp ${new Intl.NumberFormat('id-ID').format(expectedAmount)}`, isNegative: true },
+                            {
+                              label: 'Selisih',
+                              value: isCashCounted
+                                ? `${discrepancy < 0 ? 'Kurang' : discrepancy > 0 ? 'Lebih' : 'Cocok'} Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(discrepancy))}`
+                                : 'Menunggu hitung',
+                              isHighlight: true,
+                              isNegative: discrepancy < 0,
+                            },
+                          ],
+                          note: 'Selisih disimpan apa adanya dan tidak mengubah catatan penjualan barang.',
+                        })}
+                        label="Rincian Selisih"
+                      />
+                    </div>
+                    <div className="settlement-card-amount" style={{ color: !isCashCounted ? 'var(--muted)' : actualReceived === expectedAmount ? 'var(--green)' : 'var(--red)' }}>
+                      {!isCashCounted
+                        ? 'Menunggu hitung'
+                        : actualReceived === expectedAmount
+                        ? 'Rp 0 (Cocok)'
+                        : actualReceived < expectedAmount
+                        ? `Kurang Rp ${new Intl.NumberFormat('id-ID').format(expectedAmount - actualReceived)}`
+                        : `Lebih Rp ${new Intl.NumberFormat('id-ID').format(actualReceived - expectedAmount)}`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Note Textarea */}
+              <div className="form-card" style={{ marginTop: '0', marginBottom: '14px' }}>
+                <label htmlFor="deposit-notes" className="field-label" style={{ marginBottom: '6px', display: 'block' }}>
+                  Keterangan (opsional)
+                </label>
+                <textarea
+                  id="deposit-notes"
+                  className="field-textarea"
+                  rows={2}
+                  placeholder="Contoh: uang kembalian kasir, ada nota darurat, dll."
+                  value={depositNote}
+                  onChange={(e) => setDepositNote(e.target.value)}
+                />
+              </div>
+
+              {/* Buttons: Simpan Setoran & Catat Ambil Uang Pribadi */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-dark"
+                  style={{ width: '100%', minHeight: '44px' }}
+                  onClick={handleSaveDeposit}
+                >
+                  Simpan Setoran
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-paper"
+                  style={{ width: '100%', minHeight: '38px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  onClick={() => setShowWithdrawModal(true)}
+                >
+                  <Wallet size={14} />
+                  <span>Catat Ambil Uang (Pengambilan Pribadi)</span>
+                </button>
               </div>
             </div>
-
-            {/* Note Textarea */}
-            <div className="form-card" style={{ marginTop: '0', marginBottom: '18px' }}>
-              <label htmlFor="deposit-notes" className="field-label" style={{ marginBottom: '8px', display: 'block' }}>
-                Keterangan (opsional)
-              </label>
-              <textarea
-                id="deposit-notes"
-                className="field-textarea"
-                rows={3}
-                placeholder="Contoh: uang kembalian kasir, ada nota darurat, dll."
-                value={depositNote}
-                onChange={(e) => setDepositNote(e.target.value)}
-              />
-            </div>
-
-            {/* Button: Simpan Setoran */}
-            <button
-              type="button"
-              className="btn btn-dark"
-              style={{ width: '100%' }}
-              onClick={handleSaveDeposit}
-            >
-              Simpan setoran
-            </button>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ======================================================== */}
         {/* SECONDARY SCREEN: BIAYA TOKO                             */}
@@ -1837,8 +2350,9 @@ export default function App() {
           <div className="form-card">
             <h3 className="form-card-title">Catat Pengeluaran Toko</h3>
             <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '14px' }}>
-              Catat biaya operasional toko seperti gas, listrik, plastik es, atau sabun.
+              Catat biaya operasional toko seperti gas, listrik, plastik, atau kebersihan.
             </p>
+
             <div className="field-group" style={{ marginBottom: '12px' }}>
               <label htmlFor="b-name" className="field-label">Nama Pengeluaran</label>
               <input
@@ -1848,24 +2362,51 @@ export default function App() {
                 placeholder="Contoh: Beli plastik & sedotan"
                 value={expenseName}
                 onChange={(e) => setExpenseName(e.target.value)}
+                onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
               />
             </div>
-            <div className="field-group" style={{ marginBottom: '14px' }}>
+
+            <div className="field-group" style={{ marginBottom: '12px' }}>
               <label htmlFor="b-cost" className="field-label">Nominal (Rp)</label>
               <input
                 id="b-cost"
-                type="number"
-                min="0"
+                type="text"
+                inputMode="numeric"
                 className="field-input"
-                placeholder="Contoh: 25000"
-                value={expenseAmount || ''}
-                onChange={(e) => setExpenseAmount(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="Rp 0"
+                value={expenseAmountStr ? `Rp ${formatRupiahInput(expenseAmountStr)}` : ''}
+                onChange={(e) => setExpenseAmountStr(formatRupiahInput(e.target.value))}
+                onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
               />
             </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label className="field-label" style={{ display: 'block', marginBottom: '6px' }}>Sumber Dana</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className={`filter-chip ${expenseSourceMoney === 'LACI' ? 'active' : ''}`}
+                  onClick={() => setExpenseSourceMoney('LACI')}
+                  style={{ minHeight: '38px', padding: '6px 14px', fontSize: '12px' }}
+                >
+                  Uang laci (default)
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${expenseSourceMoney === 'PRIBADI' ? 'active' : ''}`}
+                  onClick={() => setExpenseSourceMoney('PRIBADI')}
+                  style={{ minHeight: '38px', padding: '6px 14px', fontSize: '12px' }}
+                >
+                  Uang lain
+                </button>
+              </div>
+            </div>
+
             <button
               type="button"
               className="btn btn-primary"
               onClick={handleSaveExpense}
+              style={{ minHeight: '44px', width: '100%' }}
             >
               Simpan Biaya
             </button>
@@ -1876,149 +2417,311 @@ export default function App() {
         {/* SECONDARY SCREEN: LAPORAN KEUANGAN SEJATI                */}
         {/* ======================================================== */}
         {currentScreen === 'laporan' && (() => {
-          const totalPurchases = docPayload.purchaseRecords.reduce((sum, p) => sum + p.totalCost, 0);
-          const totalPurchasesStore = docPayload.purchaseRecords.filter(p => p.sourceMoney === 'STORE').reduce((sum, p) => sum + p.totalCost, 0);
-          const totalExpenses = docPayload.expenses.reduce((sum, e) => sum + e.amount, 0);
-          const totalExpensesStore = docPayload.expenses.filter(e => e.sourceMoney === 'STORE').reduce((sum, e) => sum + e.amount, 0);
-
           return (
-            <div>
-              {/* Kartu 1: Laba Rugi Operasional */}
-              <div className="form-card" style={{ marginBottom: '14px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 className="form-card-title">1. Laba Rugi Operasional</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Blok 1: Untung */}
+              <div className="form-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h3 className="form-card-title" style={{ margin: 0, fontSize: '13px' }}>1. Untung</h3>
                   <span style={{
                     fontSize: '10px',
                     fontWeight: 800,
                     padding: '2px 8px',
-                    borderRadius: '10px',
-                    background: storeSummary.certainty === 'PASTI' ? '#eafbe3' : storeSummary.certainty === 'PERLU_DIPERIKSA' ? 'var(--amber-pale)' : '#ffebe6',
+                    borderRadius: '8px',
+                    background: storeSummary.certainty === 'PASTI' ? '#eafbe3' : 'var(--amber-pale)',
                     color: 'var(--ink)'
                   }}>
-                    {storeSummary.certainty === 'PASTI' ? 'Kepastian: Pasti' : storeSummary.certainty === 'PERLU_DIPERIKSA' ? 'Perlu Diperiksa' : 'Belum Diketahui'}
+                    {storeSummary.certainty === 'PASTI' ? 'Pasti' : 'Perlu diperiksa'}
                   </span>
                 </div>
 
-                <div className="summary-box-row" style={{ marginTop: '10px' }}>
-                  <span>Penjualan Barang (Omzet)</span>
-                  <strong style={{ fontSize: '13px' }}>
+                <div className="summary-box-row" style={{ marginTop: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Penjualan</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Penjualan',
+                        formula: 'Σ terjual × harga jual satuan',
+                        rows: [
+                          { label: 'Penjualan terhitung', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}`, isHighlight: true },
+                        ],
+                        note: 'Dihitung dari selisih cek sisa fisik barang.',
+                      })}
+                      label="Rincian Penjualan"
+                    />
+                  </div>
+                  <strong style={{ fontSize: '12px' }}>
+                    {storeSummary.grossSales.min !== storeSummary.grossSales.max ? '≈ ' : ''}
                     Rp {new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}
                   </strong>
                 </div>
 
                 <div className="summary-box-row">
-                  <span>Modal Barang Terjual (HPP)</span>
-                  <strong style={{ color: 'var(--muted)', fontSize: '13px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Modal terjual</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Modal Terjual (HPP)',
+                        formula: 'Σ terjual × modal rata-rata',
+                        rows: [
+                          { label: 'Modal barang terjual', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cogsKnown)}`, isHighlight: true },
+                        ],
+                        note: 'Modal asli dari barang-barang yang telah laku terjual.',
+                      })}
+                      label="Rincian Modal Terjual"
+                    />
+                  </div>
+                  <strong style={{ color: 'var(--muted)', fontSize: '12px' }}>
                     -Rp {new Intl.NumberFormat('id-ID').format(storeSummary.cogsKnown)}
                   </strong>
                 </div>
 
                 <div className="summary-box-row" style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed var(--line)' }}>
-                  <span style={{ fontWeight: 800 }}>Laba Kotor Operasional</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontWeight: 800 }}>Untung kotor</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Untung Kotor',
+                        formula: 'Penjualan − Modal terjual',
+                        rows: [
+                          { label: 'Penjualan', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}` },
+                          { label: 'Modal terjual', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cogsKnown)}`, isNegative: true },
+                          { label: 'Untung kotor', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossProfit ? storeSummary.grossProfit.min : 0)}`, isHighlight: true },
+                        ],
+                      })}
+                      label="Rincian Untung Kotor"
+                    />
+                  </div>
                   <strong style={{
-                    fontSize: '14px',
+                    fontSize: '13px',
                     color: (storeSummary.grossProfit?.min ?? 0) >= 0 ? 'var(--green)' : 'var(--red)'
                   }}>
-                    {(storeSummary.grossProfit?.min ?? 0) >= 0 ? '+' : ''}
                     Rp {new Intl.NumberFormat('id-ID').format(storeSummary.grossProfit?.min ?? 0)}
                   </strong>
                 </div>
 
-                <div className="summary-box-row" style={{ marginTop: '6px' }}>
-                  <span>Biaya Operasional Toko ({docPayload.expenses.length} transaksi)</span>
-                  <strong style={{ color: 'var(--muted)', fontSize: '13px' }}>
-                    -Rp {new Intl.NumberFormat('id-ID').format(totalExpenses)}
+                <div className="summary-box-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Biaya toko</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Biaya Toko',
+                        formula: 'Total biaya operasional toko',
+                        rows: [
+                          { label: 'Biaya dari laci kasir', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expensesLaci)}` },
+                          { label: 'Biaya lain / pribadi', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expensesTotal - storeSummary.expensesLaci)}` },
+                          { label: 'Total biaya toko', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expensesTotal)}`, isHighlight: true },
+                        ],
+                      })}
+                      label="Rincian Biaya Toko"
+                    />
+                  </div>
+                  <strong style={{ color: 'var(--muted)', fontSize: '12px' }}>
+                    -Rp {new Intl.NumberFormat('id-ID').format(storeSummary.expensesTotal)}
                   </strong>
                 </div>
 
-                <div className="summary-box-row" style={{ marginTop: '6px', paddingTop: '8px', borderTop: '1.5px solid var(--ink)' }}>
-                  <span style={{ fontWeight: 900, fontSize: '13px' }}>Laba Bersih Toko (Net Profit)</span>
+                <div className="summary-box-row" style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1.5px solid var(--ink)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontWeight: 900, fontSize: '12px' }}>Untung bersih</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Untung Bersih',
+                        formula: 'Untung kotor − Biaya toko',
+                        rows: [
+                          { label: 'Untung kotor', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossProfit ? storeSummary.grossProfit.min : 0)}` },
+                          { label: 'Biaya toko', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expensesTotal)}`, isNegative: true },
+                          { label: 'Untung bersih', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.netProfit ? storeSummary.netProfit.min : 0)}`, isHighlight: true },
+                        ],
+                      })}
+                      label="Rincian Untung Bersih"
+                    />
+                  </div>
                   <strong style={{
-                    fontSize: '15px',
+                    fontSize: '14px',
                     color: (storeSummary.netProfit?.min ?? 0) >= 0 ? 'var(--green)' : 'var(--red)'
                   }}>
-                    {(storeSummary.netProfit?.min ?? 0) >= 0 ? '+' : ''}
-                    Rp {new Intl.NumberFormat('id-ID').format(storeSummary.netProfit?.min ?? 0)}
+                    {storeSummary.netProfit ? (
+                      <>
+                        {storeSummary.netProfit.min !== storeSummary.netProfit.max ? '≈ ' : ''}
+                        Rp {new Intl.NumberFormat('id-ID').format(storeSummary.netProfit.min)}
+                      </>
+                    ) : (
+                      'Belum pasti'
+                    )}
                   </strong>
                 </div>
               </div>
 
-              {/* Kartu 2: Uang Kasir & Setoran Karyawan */}
-              <div className="form-card" style={{ marginBottom: '14px' }}>
-                <h3 className="form-card-title">2. Arus Kasir & Setoran Karyawan</h3>
-                <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '2px 0 10px 0' }}>
-                  Memisahkan uang masuk penjualan, belanja toko, dan setoran fisik karyawan.
-                </p>
-
-                <div className="summary-box-row">
-                  <span>Uang Penjualan Masuk</span>
-                  <strong>+Rp {new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}</strong>
+              {/* Blok 2: Uang */}
+              <div className="form-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h3 className="form-card-title" style={{ margin: 0, fontSize: '13px' }}>2. Uang</h3>
                 </div>
 
-                {totalExpensesStore > 0 && (
-                  <div className="summary-box-row">
-                    <span>Biaya Toko Dipotong Kasir</span>
-                    <strong style={{ color: 'var(--red)' }}>-Rp {new Intl.NumberFormat('id-ID').format(totalExpensesStore)}</strong>
+                <div className="summary-box-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Setoran seharusnya</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Setoran Seharusnya',
+                        formula: 'Penjualan − Biaya dari laci',
+                        rows: [
+                          { label: 'Penjualan barang', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}` },
+                          { label: 'Biaya dari laci', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expensesLaci)}`, isNegative: true },
+                          { label: 'Setoran seharusnya', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expectedDeposit)}`, isHighlight: true },
+                        ],
+                      })}
+                      label="Rincian Setoran Seharusnya"
+                    />
                   </div>
-                )}
+                  <strong style={{ fontSize: '12px' }}>Rp {new Intl.NumberFormat('id-ID').format(storeSummary.expectedDeposit)}</strong>
+                </div>
 
-                {totalPurchasesStore > 0 && (
-                  <div className="summary-box-row">
-                    <span>Belanja Barang dari Kasir</span>
-                    <strong style={{ color: 'var(--red)' }}>-Rp {new Intl.NumberFormat('id-ID').format(totalPurchasesStore)}</strong>
+                <div className="summary-box-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Setoran diterima</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Setoran Diterima',
+                        formula: 'Total uang setoran yang telah diserahkan',
+                        rows: [
+                          { label: 'Setoran diterima', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}`, isHighlight: true },
+                          { label: 'Sisa belum disetor', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.remainingDeposit)}` },
+                        ],
+                      })}
+                      label="Rincian Setoran Diterima"
+                    />
                   </div>
-                )}
+                  <strong style={{ fontSize: '12px' }}>Rp {new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}</strong>
+                </div>
+
+                <div className="summary-box-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Selisih</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Selisih Setoran',
+                        formula: 'Diterima − Seharusnya',
+                        rows: [
+                          { label: 'Setoran diterima', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}` },
+                          { label: 'Setoran seharusnya', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.expectedDeposit)}`, isNegative: true },
+                          {
+                            label: 'Selisih',
+                            value: `${storeSummary.depositDiscrepancy < 0 ? 'Kurang' : storeSummary.depositDiscrepancy > 0 ? 'Lebih' : 'Cocok'} Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(storeSummary.depositDiscrepancy))}`,
+                            isHighlight: true,
+                            isNegative: storeSummary.depositDiscrepancy < 0,
+                          },
+                        ],
+                      })}
+                      label="Rincian Selisih"
+                    />
+                  </div>
+                  <strong style={{
+                    fontSize: '12px',
+                    color: storeSummary.depositDiscrepancy < 0 ? 'var(--red)' : storeSummary.depositDiscrepancy > 0 ? 'var(--blue)' : 'var(--green)'
+                  }}>
+                    {storeSummary.depositDiscrepancy < 0
+                      ? `Kurang Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(storeSummary.depositDiscrepancy))}`
+                      : storeSummary.depositDiscrepancy > 0
+                      ? `Lebih Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.depositDiscrepancy)}`
+                      : 'Rp 0 (Cocok)'}
+                  </strong>
+                </div>
 
                 <div className="summary-box-row" style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed var(--line)' }}>
-                  <span style={{ fontWeight: 800 }}>Uang Kas Siap Disetor</span>
-                  <strong style={{ fontSize: '14px', color: 'var(--blue)' }}>
-                    Rp {new Intl.NumberFormat('id-ID').format(storeSummary.expectedDeposit)}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontWeight: 800 }}>Uang di tangan</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Uang di Tangan',
+                        formula: 'Setoran diterima − Belanja dari setoran − Pengambilan pribadi',
+                        rows: [
+                          { label: 'Setoran diterima', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}` },
+                          { label: 'Belanja dari setoran', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.purchasesFromSetoran)}`, isNegative: true },
+                          { label: 'Pengambilan pribadi', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.ownerWithdrawalsTotal)}`, isNegative: true },
+                          { label: 'Uang di tangan', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}`, isHighlight: true },
+                        ],
+                      })}
+                      label="Rincian Uang di Tangan"
+                    />
+                  </div>
+                  <strong style={{ fontSize: '13px', color: storeSummary.cashInHand >= 0 ? 'var(--ink)' : 'var(--red)' }}>
+                    Rp {new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}
                   </strong>
                 </div>
-
-                <div className="summary-box-row" style={{ marginTop: '6px' }}>
-                  <span>Total Setoran Diterima ({docPayload.deposits.length} transaksi)</span>
-                  <strong>Rp {new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}</strong>
-                </div>
-
-                {docPayload.deposits.length > 0 && (
-                  <div className="summary-box-row" style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed var(--line)' }}>
-                    <span style={{ fontWeight: 800 }}>Akumulasi Selisih Setoran</span>
-                    <strong style={{
-                      color: storeSummary.depositDiscrepancy < 0 ? 'var(--red)' : storeSummary.depositDiscrepancy > 0 ? 'var(--blue)' : 'var(--green)',
-                      fontSize: '13px'
-                    }}>
-                      {storeSummary.depositDiscrepancy < 0
-                        ? `Kurang Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(storeSummary.depositDiscrepancy))}`
-                        : storeSummary.depositDiscrepancy > 0
-                        ? `Lebih Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.depositDiscrepancy)}`
-                        : 'Rp 0 (Cocok / Pas)'}
-                    </strong>
-                  </div>
-                )}
               </div>
 
-              {/* Kartu 3: Nilai Persediaan Fisik */}
-              <div className="form-card" style={{ marginBottom: '14px' }}>
-                <h3 className="form-card-title">3. Nilai Persediaan Barang</h3>
-                <div className="summary-box-row" style={{ marginTop: '10px' }}>
-                  <span>Total Fisik Barang Tersedia</span>
-                  <strong>{storeSummary.totalAvailableUnits} pcs</strong>
+              {/* Blok 3: Barang */}
+              <div className="form-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h3 className="form-card-title" style={{ margin: 0, fontSize: '13px' }}>3. Barang</h3>
                 </div>
+
                 <div className="summary-box-row">
-                  <span>Estimasi Modal Persediaan Barang</span>
-                  <strong>Rp {new Intl.NumberFormat('id-ID').format(storeSummary.knownInventoryValue)}</strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Total fisik (pcs)</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Total Fisik Tersedia',
+                        formula: 'Akumulasi sisa stok seluruh barang toko',
+                        rows: [
+                          { label: 'Total stok barang', value: `${storeSummary.totalAvailableUnits} pcs`, isHighlight: true },
+                        ],
+                      })}
+                      label="Rincian Total Fisik"
+                    />
+                  </div>
+                  <strong style={{ fontSize: '12px' }}>{storeSummary.totalAvailableUnits} pcs</strong>
+                </div>
+
+                <div className="summary-box-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Modal persediaan</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Modal Persediaan Barang',
+                        formula: 'Σ stok tersedia × modal rata-rata per barang',
+                        rows: [
+                          { label: 'Nilai modal persediaan', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.knownInventoryValue)}`, isHighlight: true },
+                        ],
+                      })}
+                      label="Rincian Modal Persediaan"
+                    />
+                  </div>
+                  <strong style={{ fontSize: '12px' }}>Rp {new Intl.NumberFormat('id-ID').format(storeSummary.knownInventoryValue)}</strong>
                 </div>
               </div>
 
-              {/* Panduan Akuntabilitas */}
-              <div style={{ padding: '12px', background: 'var(--paper)', borderRadius: '10px', border: '1.5px solid var(--ink)', fontSize: '11px', color: 'var(--ink)' }}>
-                <strong>Prinsip Integritas Keuangan TOKO SAKALA:</strong>
-                <p style={{ marginTop: '4px', lineHeight: '1.4' }}>
-                  1. Penjualan kotor adalah omzet riil barang terjual.<br />
-                  2. Laba bersih bukan kas yang tersisa di laci, melainkan omzet dikurangi modal barang dan biaya operasional.<br />
-                  3. Uang siap setor adalah uang tunai yang seharusnya diserahkan karyawan setelah dikurangi pengeluaran operasional kasir.
-                </p>
+              {/* Single InfoButton Card for Integritas Keuangan */}
+              <div style={{ padding: '10px 12px', background: 'var(--paper)', borderRadius: '10px', border: '1.5px solid var(--ink)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', fontWeight: 800 }}>Prinsip Integritas Keuangan</span>
+                <InfoButton
+                  size={14}
+                  onClick={() => setDetailModal({
+                    title: 'Prinsip Integritas Keuangan',
+                    formula: 'Pemisahan omzet, laba sejati, dan fisik uang kas',
+                    rows: [
+                      { label: 'Penjualan kotor', value: 'Omzet barang riil terjual' },
+                      { label: 'Laba bersih', value: 'Omzet − Modal barang − Biaya toko' },
+                      { label: 'Uang siap setor', value: 'Omzet − Biaya laci kasir' },
+                      { label: 'Uang di tangan', value: 'Setoran diterima − Belanja − Ambil pribadi' },
+                    ],
+                    note: 'Belanja toko tidak dipotong dari setoran karyawan; modal barang terjual diputar ulang secara terpisah.',
+                  })}
+                  label="Rincian Prinsip Integritas Keuangan"
+                />
               </div>
             </div>
           );
@@ -3451,7 +4154,13 @@ NOTIFY pgrst, 'reload schema';`;
                     key={cat}
                     type="button"
                     className={`filter-chip ${newProdCategory === cat ? 'active' : ''}`}
-                    onClick={() => setNewProdCategory(cat)}
+                    onClick={() => {
+                      setNewProdCategory(cat);
+                      if (cat === 'Makanan') setNewProdIcon('🍜');
+                      else if (cat === 'Minuman') setNewProdIcon('💧');
+                      else if (cat === 'Rokok') setNewProdIcon('🚬');
+                      else setNewProdIcon('📦');
+                    }}
                     style={{ minHeight: '38px', padding: '6px 14px', fontSize: '12px' }}
                   >
                     {cat}
@@ -3494,14 +4203,18 @@ NOTIFY pgrst, 'reload schema';`;
                   { label: 'Dus (40 pcs)', unit: 'Dus (40 pcs)', packSize: 40 },
                   { label: 'Slop (10 bks)', unit: 'Slop (10 bks)', packSize: 10 },
                   { label: '1 Kg', unit: 'Kg', packSize: 1 },
+                  { label: 'Kustom', unit: newProdUnit, packSize: newProdPackSize },
                 ].map(pre => (
                   <button
                     key={pre.label}
                     type="button"
-                    className={`filter-chip ${newProdUnit === pre.unit && newProdPackSize === pre.packSize ? 'active' : ''}`}
+                    className={`filter-chip ${newProdPreset === pre.label ? 'active' : ''}`}
                     onClick={() => {
-                      setNewProdUnit(pre.unit);
-                      setNewProdPackSize(pre.packSize);
+                      setNewProdPreset(pre.label);
+                      if (pre.label !== 'Kustom') {
+                        setNewProdUnit(pre.unit);
+                        setNewProdPackSize(pre.packSize);
+                      }
                     }}
                     style={{ minHeight: '34px', padding: '4px 10px', fontSize: '11px' }}
                   >
@@ -3512,13 +4225,16 @@ NOTIFY pgrst, 'reload schema';`;
 
               <div className="form-row-pair">
                 <div className="field-group">
-                  <label htmlFor="np-unit" className="field-label" style={{ fontSize: '10px' }}>Teks Satuan</label>
+                  <label htmlFor="np-unit" className="field-label" style={{ fontSize: '10px' }}>Teks Satuan {newProdPreset !== 'Kustom' && '(Terkunci)'}</label>
                   <input
                     id="np-unit"
                     type="text"
+                    disabled={newProdPreset !== 'Kustom'}
                     className="field-input"
                     value={newProdUnit}
                     onChange={(e) => setNewProdUnit(e.target.value)}
+                    onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                    style={{ opacity: newProdPreset !== 'Kustom' ? 0.7 : 1 }}
                   />
                 </div>
                 <div className="field-group">
@@ -3527,9 +4243,12 @@ NOTIFY pgrst, 'reload schema';`;
                     id="np-packsize"
                     type="number"
                     min="1"
+                    disabled={newProdPreset !== 'Kustom'}
                     className="field-input"
                     value={newProdPackSize}
                     onChange={(e) => setNewProdPackSize(Math.max(1, Number(e.target.value) || 1))}
+                    onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                    style={{ opacity: newProdPreset !== 'Kustom' ? 0.7 : 1 }}
                   />
                 </div>
               </div>
@@ -3548,11 +4267,12 @@ NOTIFY pgrst, 'reload schema';`;
                 placeholder="Contoh: 3500"
                 value={newProdSellingPrice}
                 onChange={(e) => setNewProdSellingPrice(e.target.value)}
+                onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
                 style={{ width: '100%', boxSizing: 'border-box' }}
               />
             </div>
 
-            <div style={{ marginBottom: '16px', padding: '10px 12px', background: 'var(--paper)', borderRadius: '8px', border: '1px solid var(--line)' }}>
+            <div style={{ marginBottom: '14px', padding: '10px 12px', background: 'var(--paper)', borderRadius: '8px', border: '1px solid var(--line)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                 <label htmlFor="np-cost" style={{ fontSize: '11px', fontWeight: 800 }}>
                   Modal Kemasan Pembelian (Rp):
@@ -3576,14 +4296,56 @@ NOTIFY pgrst, 'reload schema';`;
                   placeholder="Contoh: 96000"
                   value={newProdCostPerPack}
                   onChange={(e) => setNewProdCostPerPack(e.target.value)}
+                  onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
                   style={{ width: '100%', boxSizing: 'border-box' }}
                 />
               ) : (
                 <div style={{ padding: '6px 8px', background: '#fef3c7', borderRadius: '4px', fontSize: '11px', color: '#b45309' }}>
-                  ℹ️ Modal akan disimpan sebagai <strong>null</strong> (bukan Rp 0). Keuntungan tidak akan dihitung secara fiktif sebelum modal diketahui.
+                  Modal disimpan sebagai <strong>null</strong>. Keuntungan tidak akan difiktifkan.
                 </div>
               )}
             </div>
+
+            {/* 1-Line Preview: Untung per pcs dengan ⓘ */}
+            {(() => {
+              const sellNum = Number(newProdSellingPrice) || 0;
+              const costNum = !newProdIsCostUnknown && Number(newProdCostPerPack) > 0 ? Number(newProdCostPerPack) : null;
+              const costPerUnit = costNum !== null ? Math.round(costNum / (newProdPackSize || 1)) : null;
+              const unitProfit = sellNum > 0 && costPerUnit !== null ? sellNum - costPerUnit : null;
+
+              return (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: 'var(--paper)', borderRadius: '6px', border: '1px solid var(--line)', marginBottom: '14px' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Untung per pcs:</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {unitProfit !== null ? (
+                      <>
+                        <strong style={{ fontSize: '12px', color: unitProfit >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                          Rp {new Intl.NumberFormat('id-ID').format(unitProfit)}
+                        </strong>
+                        <InfoButton
+                          size={12}
+                          onClick={() => setDetailModal({
+                            title: 'Estimasi Untung per Pcs',
+                            formula: 'Harga jual per pcs − Modal beli per pcs',
+                            rows: [
+                              { label: 'Harga jual satuan', value: `+Rp ${new Intl.NumberFormat('id-ID').format(sellNum)}` },
+                              { label: `Modal beli per pcs (${newProdCostPerPack ? `Rp ${new Intl.NumberFormat('id-ID').format(costNum || 0)} / ${newProdPackSize}` : 'Belum diketahui'})`, value: `-Rp ${new Intl.NumberFormat('id-ID').format(costPerUnit || 0)}`, isNegative: true },
+                              { label: 'Untung per pcs', value: `Rp ${new Intl.NumberFormat('id-ID').format(unitProfit)}`, isHighlight: true },
+                            ],
+                            note: 'Modal per pcs didapat dari harga kemasan dibagi isi per kemasan.',
+                          })}
+                          label="Rincian untung produk baru"
+                        />
+                      </>
+                    ) : (
+                      <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                        {sellNum > 0 ? 'Modal belum diisi' : 'Masukkan harga jual'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <button
@@ -3638,16 +4400,16 @@ NOTIFY pgrst, 'reload schema';`;
                 </strong>
               </div>
               <div className="summary-box-row">
-                <span>2. Biaya operasional toko (uang kasir):</span>
+                <span>2. Biaya operasional toko (uang laci):</span>
                 <strong style={{ color: 'var(--red)' }}>
-                  -Rp {new Intl.NumberFormat('id-ID').format(docPayload.expenses.filter(e => e.sourceMoney === 'STORE').reduce((sum, e) => sum + e.amount, 0))}
+                  -Rp {new Intl.NumberFormat('id-ID').format(storeSummary.expensesLaci)}
                 </strong>
               </div>
               <div className="summary-box-row">
-                <span>3. Belanja barang (uang kasir):</span>
-                <strong style={{ color: 'var(--red)' }}>
-                  -Rp {new Intl.NumberFormat('id-ID').format(docPayload.purchaseRecords.filter(p => p.sourceMoney === 'STORE').reduce((sum, p) => sum + p.totalCost, 0))}
-                </strong>
+                <span>3. Belanja barang (diputar dari setoran):</span>
+                <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                  Tidak memotong setoran karyawan
+                </span>
               </div>
               <div className="summary-box-row" style={{ paddingTop: '8px', borderTop: '1.5px solid var(--ink)' }}>
                 <span style={{ fontWeight: 900 }}>Uang Kas Siap Setor Saat Ini:</span>
@@ -3771,6 +4533,191 @@ NOTIFY pgrst, 'reload schema';`;
                   <span>Urungkan (Undo)</span>
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog: Rincian Angka Keuangan (Bottom Sheet / ModalForm style) */}
+      {detailModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+          <div className="form-card" style={{ maxWidth: '440px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Info size={18} color="var(--blue)" />
+                <h3 className="form-card-title" style={{ margin: 0, fontSize: '15px' }}>{detailModal.title}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailModal(null)}
+                style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                aria-label="Tutup dialog rincian"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ padding: '8px 10px', background: 'var(--paper)', borderRadius: '6px', border: '1px solid var(--line)', marginBottom: '12px', fontSize: '11px', color: 'var(--muted)' }}>
+              <strong style={{ color: 'var(--ink)' }}>Rumus: </strong>
+              <span>{detailModal.formula}</span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' }}>
+              {detailModal.rows.map((row, idx) => (
+                <div
+                  key={idx}
+                  className="summary-box-row"
+                  style={{
+                    paddingTop: row.isHighlight ? '8px' : '4px',
+                    borderTop: row.isHighlight ? '1.5px solid var(--ink)' : 'none',
+                    fontWeight: row.isHighlight ? 800 : 500,
+                  }}
+                >
+                  <span>{row.label}</span>
+                  <strong style={{ color: row.isNegative ? 'var(--red)' : row.isHighlight ? 'var(--ink)' : undefined }}>
+                    {row.value}
+                  </strong>
+                </div>
+              ))}
+            </div>
+
+            {detailModal.note && (
+              <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '0 0 12px 0', lineHeight: 1.4 }}>
+                {detailModal.note}
+              </p>
+            )}
+
+            {detailModal.showItemsLink && detailModal.itemsBreakdown && detailModal.itemsBreakdown.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-paper"
+                style={{ width: '100%', minHeight: '38px', fontSize: '11px', marginBottom: '10px' }}
+                onClick={() => {
+                  setShowItemsBreakdownModal(detailModal.itemsBreakdown || []);
+                }}
+              >
+                Lihat rincian barang ({detailModal.itemsBreakdown.length} item) →
+              </button>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setDetailModal(null)}
+              style={{ minHeight: '44px', width: '100%' }}
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog: Rincian Penjualan per Barang */}
+      {showItemsBreakdownModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 10000, padding: '16px' }}>
+          <div className="form-card" style={{ maxWidth: '440px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 className="form-card-title" style={{ margin: 0, fontSize: '14px' }}>Rincian Penjualan Barang</h3>
+              <button
+                type="button"
+                onClick={() => setShowItemsBreakdownModal(null)}
+                style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                aria-label="Tutup rincian barang"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+              {showItemsBreakdownModal.map((item, idx) => (
+                <div key={idx} className="summary-box-row" style={{ alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '12px' }}>{item.name}</div>
+                    <div style={{ fontSize: '10px', color: 'var(--muted)' }}>{item.calculation}</div>
+                  </div>
+                  <strong style={{ fontSize: '12px' }}>{item.total}</strong>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowItemsBreakdownModal(null)}
+              style={{ minHeight: '44px', width: '100%' }}
+            >
+              Kembali
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog: Catat Ambil Uang Pribadi */}
+      {showWithdrawModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 9999, padding: '16px' }}>
+          <div className="form-card" style={{ maxWidth: '440px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Wallet size={18} color="var(--orange)" />
+                <h3 className="form-card-title" style={{ margin: 0, fontSize: '15px' }}>Catat Ambil Uang (Pribadi)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWithdrawModal(false)}
+                style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                aria-label="Tutup"
+              >
+                ✕
+              </button>
+            </div>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', margin: '0 0 12px 0' }}>
+              Catat uang setoran toko yang diambil pemilik untuk keperluan pribadi. Uang di tangan akan berkurang.
+            </p>
+
+            <div className="field-group" style={{ marginBottom: '12px' }}>
+              <label className="field-label" htmlFor="with-amount">Nominal Ambil Uang (Rp)</label>
+              <input
+                id="with-amount"
+                type="text"
+                inputMode="numeric"
+                className="field-input"
+                placeholder="Rp 0"
+                value={withdrawAmountStr ? `Rp ${formatRupiahInput(withdrawAmountStr)}` : ''}
+                onChange={(e) => setWithdrawAmountStr(formatRupiahInput(e.target.value))}
+                onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+              />
+            </div>
+
+            <div className="field-group" style={{ marginBottom: '16px' }}>
+              <label className="field-label" htmlFor="with-note">Keperluan / Catatan</label>
+              <input
+                id="with-note"
+                type="text"
+                className="field-input"
+                placeholder="Contoh: Keperluan rumah tangga"
+                value={withdrawNote}
+                onChange={(e) => setWithdrawNote(e.target.value)}
+                onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+              />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleSaveWithdrawal}
+                style={{ minHeight: '44px', width: '100%' }}
+              >
+                Simpan Pengambilan Uang
+              </button>
+              <button
+                type="button"
+                className="btn btn-paper"
+                onClick={() => setShowWithdrawModal(false)}
+                style={{ minHeight: '40px', fontSize: '11px' }}
+              >
+                Batal
+              </button>
             </div>
           </div>
         </div>

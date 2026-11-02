@@ -29,7 +29,7 @@ describe('IndexedDBAdapter — Penyimpanan Lokal Offline-First', () => {
           occurredAt: new Date().toISOString(),
           description: 'Beli sedotan & kresek',
           amount: 15000,
-          sourceMoney: 'STORE',
+          sourceMoney: 'LACI',
         },
       ],
     };
@@ -88,7 +88,7 @@ describe('IndexedDBAdapter — Penyimpanan Lokal Offline-First', () => {
           packs: 1,
           unitsPerPack: 40,
           totalCost: 96000,
-          sourceMoney: 'STORE',
+          sourceMoney: 'SETORAN',
         },
       ],
     };
