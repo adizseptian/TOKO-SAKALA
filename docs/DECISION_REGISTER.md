@@ -103,6 +103,32 @@ Labels:
   - Prosedur eksekusi DDL difasilitasi dengan tombol *one-click copy* di UI modal Supabase toko untuk pengeksekusian di Supabase SQL Editor proyek `dvznpniodskujfbdznnv.supabase.co`.
 - **Alasan**: Kepatuhan terhadap Prosedur Migrasi Terkontrol (Phase 04) yang melarang perubahan struktur database tanpa otorisasi tertulis eksplisit dari pemilik sistem.
 
+### DR-014: Integrasi Mesin Hitung Finansial Tunggal via engineBridge (LOCKED)
+- **Status**: LOCKED (Mengatasi temuan UI/UX audit 2 November 2026).
+- **Isi Keputusan**:
+  - Seluruh perhitungan finansial toko (modal rata-rata bergerak, dua kolam modal known vs unknown, rentang kepastian PASTI/PERLU_DIPERIKSA/BELUM_DIKETAHUI, dan estimasi uang kas siap setor) wajib diproses melalui pure function `calculate()` di `src/engine/v1/calculate.ts`.
+  - Dilarang membuat logika perhitungan keuangan ad-hoc atau angka statis terpisah di komponen UI. Modul `src/engine/v1/engineBridge.ts` menjadi satu-satunya adaptor penerjemah payload dokumen menjadi kejadian domain.
+- **Alasan**: Menegakkan prinsip inti PRD "Satu engine untuk semua" dan memastikan angka uang dihitung dari kejadian nyata toko.
+
+### DR-015: Perhitungan Penjualan Riil Cek Sisa Stok & Pola Pembatalan Undo (LOCKED)
+- **Status**: LOCKED.
+- **Isi Keputusan**:
+  - Penjualan wajib dihitung dari selisih fisik cek stok: `terjual = stok_tersedia - sisa_fisik`.
+  - Jika `sisa_fisik < stok_tersedia`, sistem otomatis mencatat `SalesRecord` riil yang menghasilkan omzet dan modal barang terjual (HPP).
+  - Jika `sisa_fisik > stok_tersedia`, sistem tidak pernah membuat penjualan negatif; kelebihan dicatat sebagai penyesuaian stok dan ditandai `PERLU_DIPERIKSA`.
+  - Setiap penyimpanan cek sisa stok dan setoran wajib menampilkan dialog konfirmasi hasil dan menyediakan tombol **Urungkan (Undo)** yang mengembalikan snapshot payload sebelum transaksi.
+- **Alasan**: Mencegah salah hitung kasir dan memberi ketenangan pikiran kepada pengguna warung saat terjadi kesalahan input.
+
+### DR-016: Struktur Laporan Keuangan Berjenjang Multi-Lapisan (LOCKED)
+- **Status**: LOCKED.
+- **Isi Keputusan**:
+  - Laporan keuangan dipisahkan secara tegas menjadi 3 lapisan:
+    1. *Laba Rugi Operasional*: Penjualan Kotor − Modal Barang Terjual (HPP) = Laba Kotor; Laba Kotor − Biaya Operasional = Laba Bersih Toko.
+    2. *Arus Kasir & Setoran*: Kas Masuk Penjualan − Pengeluaran Kasir = Kas Siap Setor vs Setoran Diterima = Selisih Setoran.
+    3. *Nilai Persediaan*: Total unit fisik (pcs) dan modal persediaan.
+  - Menghapus formula rancu lama (*Arus kas = setoran - biaya - belanja*).
+- **Alasan**: Mencegah pencampuran antara laba toko, arus kas, dan barang fisik.
+
 ---
 
 ## PENDING / NOT FINAL — reconcile before full implementation
@@ -116,10 +142,9 @@ Labels:
 ## STATUS LINGKUNGAN PENGUJIAN & VERIFIKASI (VERIFICATION STATUS)
 
 - `npm run scan:secrets`: **PASS** (0 secret terdeteksi di kode frontend).
-- `npm run test` (vitest): **PASS** (14 test files, 61 unit & integration tests lulus 100%).
+- `npm run test` (vitest): **PASS** (15 test files, 64 unit & integration tests lulus 100%).
 - `npm run build` (tsc & vite): **PASS** (Clean Build, 0 error kompilasi).
 - Headless Playwright script: **TERSEDIA** (`tests/playwright/transactions.spec.ts`, dapat dijalankan dengan `npx playwright test` di lingkungan yang memiliki binari browser Chromium).
-- Git status / push CLI: **BLOCKED IN SANDBOX** (`fatal: not a git repository` karena direktori `.git` tidak disertakan di sandbox runtime; operasi git commit dan push wajib dilakukan dari repo lokal atau GitHub remote).
 
 ## Change policy
 
