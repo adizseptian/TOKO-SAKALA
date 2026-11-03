@@ -21,6 +21,7 @@ export interface ProductCalculation {
   unknownLossKnown: number;
   certainty: "PASTI" | "PERLU_DIPERIKSA" | "BELUM_DIKETAHUI";
   notes: string[];
+  latestUnitCost?: number | null;
 }
 
 export interface DepositCheck {

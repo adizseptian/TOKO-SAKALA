@@ -5,6 +5,7 @@ interface Pool {
   knownUnits: number;
   knownValue: number;
   unknownUnits: number;
+  latestUnitCost: number | null;
   currentPrice: number;
   intervalPrices: number[];
   lastObservedUnits: number | null;
@@ -42,32 +43,33 @@ function ensureSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value)) throw new Error(`ENGINE_UNSAFE_INTEGER:${label}`);
 }
 
-/** Remove units proportionally from known-modal and unknown-modal pools. All arithmetic is integer rupiah/pcs. */
+/** Remove units using latest unit cost. All arithmetic is integer rupiah/pcs. */
 function removeUnits(pool: Pool, requested: number): { removed: number; knownValueRemoved: number; unknownUnitsRemoved: number } {
   const available = pool.knownUnits + pool.unknownUnits;
   const removed = Math.min(Math.max(0, requested), available);
   if (removed === 0 || available === 0) return { removed: 0, knownValueRemoved: 0, unknownUnitsRemoved: 0 };
 
-  let knownOut = Math.min(pool.knownUnits, roundHalfUp(removed * pool.knownUnits, available));
-  let unknownOut = removed - knownOut;
-  if (unknownOut > pool.unknownUnits) {
-    unknownOut = pool.unknownUnits;
-    knownOut = removed - unknownOut;
-  }
-  if (knownOut > pool.knownUnits) {
-    knownOut = pool.knownUnits;
-    unknownOut = removed - knownOut;
-  }
+  let knownOut = 0;
+  let unknownOut = 0;
+  let valueOut = 0;
 
-  const valueOut = knownOut === pool.knownUnits
-    ? pool.knownValue
-    : knownOut === 0 || pool.knownUnits === 0
-      ? 0
-      : roundHalfUp(pool.knownValue * knownOut, pool.knownUnits);
+  if (pool.latestUnitCost !== null && pool.latestUnitCost !== undefined) {
+    knownOut = Math.min(pool.knownUnits, removed);
+    unknownOut = removed - knownOut;
+    valueOut = knownOut * pool.latestUnitCost;
+  } else {
+    unknownOut = removed;
+    knownOut = 0;
+    valueOut = 0;
+  }
 
   pool.knownUnits -= knownOut;
   pool.unknownUnits -= unknownOut;
-  pool.knownValue -= valueOut;
+  if (pool.latestUnitCost !== null && pool.latestUnitCost !== undefined) {
+    pool.knownValue = pool.knownUnits * pool.latestUnitCost;
+  } else {
+    pool.knownValue = 0;
+  }
 
   ensureSafeInteger(pool.knownUnits, "knownUnits");
   ensureSafeInteger(pool.unknownUnits, "unknownUnits");
@@ -99,7 +101,7 @@ export function calculate(input: EngineInput): EngineOutput {
   for (const product of input.products) {
     productsById.set(product.id, product);
     states.set(product.id, {
-      knownUnits: 0, knownValue: 0, unknownUnits: 0,
+      knownUnits: 0, knownValue: 0, unknownUnits: 0, latestUnitCost: null,
       currentPrice: product.sellingPrice, intervalPrices: [product.sellingPrice],
       lastObservedUnits: null, baselineSeen: false, unitsSold: 0, salesRevenue: exact(0),
       costOfSoldKnown: 0, damageLossKnown: 0, usedLossKnown: 0, unknownLossKnown: 0,
@@ -134,8 +136,11 @@ export function calculate(input: EngineInput): EngineOutput {
       }
       const purchasedUnits = event.packs * event.unitsPerPack;
       ensureSafeInteger(purchasedUnits, "purchaseUnits");
-      pool.knownUnits += purchasedUnits;
-      pool.knownValue += event.totalCost;
+      const unitCost = roundHalfUp(event.totalCost, purchasedUnits);
+      pool.latestUnitCost = unitCost;
+      pool.knownUnits += purchasedUnits + pool.unknownUnits;
+      pool.unknownUnits = 0;
+      pool.knownValue = pool.knownUnits * pool.latestUnitCost;
       ensureSafeInteger(pool.knownUnits, "knownUnitsAfterPurchase");
       ensureSafeInteger(pool.knownValue, "knownValueAfterPurchase");
       if (event.sourceMoney === "LACI" || event.sourceMoney === "STORE") storeCash = subRangeFromNumber(storeCash, event.totalCost);
@@ -155,8 +160,13 @@ export function calculate(input: EngineInput): EngineOutput {
         markGlobalReview();
         continue;
       }
-      if (event.unitCost === undefined) pool.unknownUnits += event.units;
-      else { pool.knownUnits += event.units; pool.knownValue += event.units * event.unitCost; }
+      if (event.unitCost === undefined) {
+        pool.unknownUnits += event.units;
+      } else {
+        pool.latestUnitCost = event.unitCost;
+        pool.knownUnits += event.units;
+        pool.knownValue = pool.knownUnits * event.unitCost;
+      }
       pool.lastObservedUnits = event.units;
       pool.baselineSeen = true;
       continue;
@@ -292,7 +302,8 @@ export function calculate(input: EngineInput): EngineOutput {
       usedLossKnown: pool.usedLossKnown,
       unknownLossKnown: pool.unknownLossKnown,
       certainty: pool.certainty,
-      notes: pool.notes
+      notes: pool.notes,
+      latestUnitCost: pool.latestUnitCost,
     };
   });
 

@@ -17,20 +17,23 @@ export interface CatalogProduct {
 
 export interface StoreFinancialSummary {
   engineOutput: EngineOutput;
-  /** Nilai penjualan dari cek sisa stok */
+  /** Nilai penjualan dari cek sisa stok (Untung Kotor: Σ terjual × harga jual − Diskon) */
   grossSales: { min: number; max: number };
-  /** Modal barang terjual (HPP / Modal kembali) */
+  untungKotor: { min: number; max: number };
+  /** Modal barang terjual (HPP dengan modal terbaru) */
   cogsKnown: number;
   modalKembali: number;
-  /** Laba kotor (Penjualan - Modal terjual) */
+  /** Laba setelah modal = Untung Bersih - modal barang terjual (hanya di Laporan) */
+  labaSetelahModal: { min: number; max: number } | null;
   grossProfit: { min: number; max: number } | null;
   /** Total seluruh biaya operasional toko */
   expensesTotal: number;
   /** Biaya dari laci kasir (yang mengurangi setoran seharusnya) */
   expensesLaci: number;
-  /** Laba bersih operasional (Laba kotor - Seluruh biaya toko) */
+  /** Untung Bersih = Untung Kotor − semua pengeluaran toko + pemasukan lain */
+  untungBersih: { min: number; max: number } | null;
   netProfit: { min: number; max: number } | null;
-  /** Setoran kas yang seharusnya diserahkan (Penjualan - Biaya laci) */
+  /** Setoran kas yang seharusnya diserahkan (Untung Kotor - Biaya laci) */
   expectedDeposit: number;
   /** Total setoran yang sudah diterima dari karyawan */
   totalDeposits: number;
@@ -40,14 +43,16 @@ export interface StoreFinancialSummary {
   depositDiscrepancy: number;
   /** Total belanja keseluruhan */
   totalPurchases: number;
-  /** Belanja yang dibayar dari uang setoran */
+  /** Belanja yang dibayar dari uang setoran ("Untung bersih toko") */
   purchasesFromSetoran: number;
   /** Pengambilan pribadi oleh pemilik */
   ownerWithdrawalsTotal: number;
   /** Uang di tangan (Setoran diterima - Belanja dari setoran - Pengambilan pribadi) */
   cashInHand: number;
-  /** Sisa dana belanja (Modal kembali - Total belanja; negatif = diambil dari untung) */
+  isCashInHandCalculable: boolean;
+  /** Sisa dana belanja (Untung Bersih − belanja bersumber "Untung bersih toko") */
   remainingShoppingBudget: number;
+  sisaDanaBelanjaUntung: number;
   /** Status kepastian angka keuangan */
   certainty: 'PASTI' | 'PERLU_DIPERIKSA' | 'BELUM_DIKETAHUI';
   /** Satu alasan utama badge/chip peringatan */
@@ -57,7 +62,13 @@ export interface StoreFinancialSummary {
   /** Nilai aset barang fisik di toko menurut modal yang diketahui */
   knownInventoryValue: number;
   /** Map sisa stok per produk menurut catatan */
-  stockByProduct: Map<string, { availableUnits: number; lastObservedUnits: number | null; unitsSold: number }>;
+  stockByProduct: Map<string, {
+    availableUnits: number;
+    lastObservedUnits: number | null;
+    unitsSold: number;
+    latestUnitCost: number | null;
+    checkCount: number;
+  }>;
 }
 
 /**
@@ -192,7 +203,7 @@ export function buildEngineInputFromPayload(
       seq: 0,
       occurredAt: dep.occurredAt,
       type: 'deposit',
-      amount: dep.receivedAmount,
+      amount: dep.receivedAmount ?? (dep as any).amount ?? 0,
     });
   });
 
@@ -238,6 +249,7 @@ export function runStoreFinancialEngine(
   const engineOutput = calculate(engineInput);
 
   const grossSales = engineOutput.totals.salesRevenue;
+  const untungKotor = grossSales;
   const cogsKnown = engineOutput.totals.costOfGoodsSoldKnown;
   const modalKembali = cogsKnown;
   const expensesTotal = engineOutput.totals.expenses;
@@ -250,7 +262,7 @@ export function runStoreFinancialEngine(
     }
   });
 
-  // Laba Kotor = Penjualan - Modal Terjual
+  // Laba Kotor Operasional = Penjualan - Modal Terjual
   const grossProfit =
     engineOutput.totals.profit !== null
       ? {
@@ -259,7 +271,7 @@ export function runStoreFinancialEngine(
         }
       : null;
 
-  // Laba Bersih = Laba Kotor - Total Biaya Toko
+  // Laba Bersih Operasional = Laba Kotor - Total Biaya Toko
   const netProfit =
     grossProfit !== null
       ? {
@@ -268,8 +280,21 @@ export function runStoreFinancialEngine(
         }
       : null;
 
-  // Setoran seharusnya = Penjualan - Biaya laci
-  const expectedDeposit = Math.max(0, grossSales.min - expensesLaci);
+  // Istilah Pemilik Toko:
+  // Untung Bersih = Untung Kotor − semua pengeluaran toko + pemasukan lain
+  const untungBersih = {
+    min: untungKotor.min - expensesTotal,
+    max: untungKotor.max - expensesTotal,
+  };
+
+  // Laba setelah modal = Untung Bersih − modal barang terjual (hanya di Laporan)
+  const labaSetelahModal = {
+    min: untungBersih.min - cogsKnown,
+    max: untungBersih.max - cogsKnown,
+  };
+
+  // Setoran seharusnya = Untung Kotor + pemasukan lain − pengeluaran yang dibayar uang laci
+  const expectedDeposit = Math.max(0, untungKotor.min - expensesLaci);
 
   // Total setoran yang sudah diterima dari karyawan
   const totalDeposits = engineOutput.totals.totalDeposits;
@@ -296,11 +321,15 @@ export function runStoreFinancialEngine(
     ownerWithdrawalsTotal += w.amount;
   });
 
-  // Uang di tangan = Setoran diterima - Belanja dari setoran - Pengambilan pribadi
+  // Uang di tangan = setoran diterima − belanja bersumber "Untung bersih toko" − pengambilan pribadi
   const cashInHand = totalDeposits - purchasesFromSetoran - ownerWithdrawalsTotal;
+  const isCashInHandCalculable = totalDeposits > 0;
 
-  // Sisa dana belanja = Modal kembali - Total belanja (negatif = diambil dari untung)
+  // Sisa dana belanja:
+  // 1. Menurut modal: Modal kembali - Total belanja (negatif = diambil dari untung)
   const remainingShoppingBudget = modalKembali - totalPurchases;
+  // 2. Menurut untung bersih toko: Untung Bersih - Belanja bersumber untung bersih toko
+  const sisaDanaBelanjaUntung = untungBersih.min - purchasesFromSetoran;
 
   // Cari satu alasan utama bila kepastian bukan PASTI
   let reviewReason: string | null = null;
@@ -322,27 +351,42 @@ export function runStoreFinancialEngine(
   let knownInventoryValue = 0;
   const stockByProduct = new Map<
     string,
-    { availableUnits: number; lastObservedUnits: number | null; unitsSold: number }
+    {
+      availableUnits: number;
+      lastObservedUnits: number | null;
+      unitsSold: number;
+      latestUnitCost: number | null;
+      checkCount: number;
+    }
   >();
 
   engineOutput.products.forEach((p) => {
     totalAvailableUnits += p.availableUnits;
     knownInventoryValue += p.knownInventoryValue;
+    const checkCount = (payload.stockMovements || []).filter(
+      (m) => m.productId === p.productId && m.type === 'CHECK_ADJUSTMENT'
+    ).length;
+
     stockByProduct.set(p.productId, {
       availableUnits: p.availableUnits,
       lastObservedUnits: p.lastObservedUnits,
       unitsSold: p.unitsSold,
+      latestUnitCost: p.latestUnitCost ?? null,
+      checkCount,
     });
   });
 
   return {
     engineOutput,
     grossSales,
+    untungKotor,
     cogsKnown,
     modalKembali,
+    labaSetelahModal,
     grossProfit,
     expensesTotal,
     expensesLaci,
+    untungBersih,
     netProfit,
     expectedDeposit,
     totalDeposits,
@@ -352,11 +396,44 @@ export function runStoreFinancialEngine(
     purchasesFromSetoran,
     ownerWithdrawalsTotal,
     cashInHand,
+    isCashInHandCalculable,
     remainingShoppingBudget,
+    sisaDanaBelanjaUntung,
     certainty: engineOutput.totals.certainty,
     reviewReason,
     totalAvailableUnits,
     knownInventoryValue,
     stockByProduct,
   };
+}
+
+/**
+ * Mengambil modal per pcs terbaru suatu produk:
+ * 1. Dari belanja bernota paling mutakhir (totalCost ÷ pcs masuk).
+ * 2. Atau dari modal produk awal jika ada.
+ * 3. Null jika belum diketahui.
+ */
+export function getProductLatestUnitCost(
+  productId: string,
+  payload: TokoSakalaPayload,
+  catalog: CatalogProduct[]
+): number | null {
+  const purchases = (payload.purchaseRecords || [])
+    .filter((p) => p.productId === productId && p.totalCost > 0)
+    .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+
+  if (purchases.length > 0) {
+    const latest = purchases[0];
+    const totalPcs = latest.packs * latest.unitsPerPack;
+    if (totalPcs > 0) {
+      return Math.round(latest.totalCost / totalPcs);
+    }
+  }
+
+  const prod = catalog.find((c) => c.id === productId);
+  if (prod && prod.costPerPack !== null && prod.costPerPack !== undefined && prod.packSize > 0) {
+    return Math.floor(prod.costPerPack / prod.packSize);
+  }
+
+  return null;
 }

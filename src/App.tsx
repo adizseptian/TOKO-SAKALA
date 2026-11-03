@@ -9,8 +9,7 @@ import {
 } from 'lucide-react';
 import { ModalForm } from '@/components/ModalForm';
 import { calculatePurchasePreview } from '@/engine/v1/purchase-preview';
-import { calculateStockCheckPreview } from '@/engine/v1/stock-check-preview';
-import { runStoreFinancialEngine, type StoreFinancialSummary } from '@/engine/v1/engineBridge';
+import { runStoreFinancialEngine, getProductLatestUnitCost, type StoreFinancialSummary } from '@/engine/v1/engineBridge';
 import {
   googleAuth,
   GoogleDriveAdapter,
@@ -205,7 +204,23 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
   const [expenseName, setExpenseName] = useState<string>('');
   const [expenseAmount, setExpenseAmount] = useState<number>(0);
   const [expenseAmountStr, setExpenseAmountStr] = useState<string>('');
-  const [expenseSourceMoney, setExpenseSourceMoney] = useState<'LACI' | 'PRIBADI'>('LACI');
+  const [expenseSourceMoney, setExpenseSourceMoney] = useState<'LACI' | 'PRIBADI'>(() => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('toko_sakala_expense_source');
+      if (saved === 'LACI' || saved === 'PRIBADI') return saved;
+    }
+    return 'LACI';
+  });
+
+  // Modal Cek Harga Jual saat modal naik
+  const [showPriceCheckModal, setShowPriceCheckModal] = useState<boolean>(false);
+  const [newSellingPriceInput, setNewSellingPriceInput] = useState<string>('');
+
+  // Helper cek apakah barang sudah punya rekaman pergerakan / pembelian stok
+  const hasRecordedStock = (productId: string) => {
+    return (docPayload.stockMovements || []).some(m => m.productId === productId) ||
+           (docPayload.purchaseRecords || []).some(pr => pr.productId === productId);
+  };
 
   // Modal Pengambilan Pribadi (Owner Withdrawal)
   const [showWithdrawModal, setShowWithdrawModal] = useState<boolean>(false);
@@ -570,13 +585,16 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
     const packSize = isKemasan ? selectedProduct.packSize : 1;
     const piecesToAdd = isKemasan ? qty * selectedProduct.packSize : qty;
 
-    const computedCost = selectedProduct.costPerPack !== null
-      ? (isKemasan
-          ? qty * selectedProduct.costPerPack
-          : Math.round((qty * selectedProduct.costPerPack) / selectedProduct.packSize))
-      : Math.max(0, parseRupiahInput(customPurchaseCost));
+    const oldModalPerPcs = getProductLatestUnitCost(selectedProduct.id, docPayload, catalogList);
+    const defaultCostPerPack = selectedProduct.costPerPack ?? (oldModalPerPcs ? oldModalPerPcs * selectedProduct.packSize : 0);
+    const defaultTotal = defaultCostPerPack > 0
+      ? (isKemasan ? qty * defaultCostPerPack : Math.round((qty * defaultCostPerPack) / selectedProduct.packSize))
+      : 0;
 
-    const totalCost = computedCost;
+    const totalCost = customPurchaseCost !== ''
+      ? Math.max(0, parseRupiahInput(customPurchaseCost))
+      : defaultTotal;
+
     const nowIso = new Date().toISOString();
 
     const newPurchase: PurchaseRecord = {
@@ -609,6 +627,41 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
     if (ok) {
       setPurchaseQty(1);
       setCustomPurchaseCost('');
+    }
+  };
+
+  const handleUpdateSellingPrice = async (newPrice: number) => {
+    if (newPrice <= 0) return;
+    const existsInCustom = (docPayload.products || []).some(p => p.id === selectedProduct.id);
+    let updatedProducts: typeof docPayload.products;
+    if (existsInCustom) {
+      updatedProducts = (docPayload.products || []).map(p =>
+        p.id === selectedProduct.id ? { ...p, sellingPricePerUnit: newPrice } : p
+      );
+    } else {
+      updatedProducts = [
+        ...(docPayload.products || []),
+        {
+          id: selectedProduct.id,
+          name: selectedProduct.name,
+          category: selectedProduct.category,
+          unit: selectedProduct.unit,
+          packSize: selectedProduct.packSize,
+          costPerPack: selectedProduct.costPerPack,
+          sellingPricePerUnit: newPrice,
+          icon: selectedProduct.icon,
+          active: true,
+        },
+      ];
+    }
+    const nextPayload = { ...docPayload, products: updatedProducts };
+    const ok = await executeSaveTransaction(
+      nextPayload,
+      `Harga jual ${selectedProduct.name} diubah menjadi Rp ${new Intl.NumberFormat('id-ID').format(newPrice)}`
+    );
+    if (ok) {
+      setSelectedProduct(prev => ({ ...prev, sellingPricePerUnit: newPrice }));
+      setShowPriceCheckModal(false);
     }
   };
 
@@ -674,6 +727,7 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
     let totalSalesRevenue = 0;
     let totalCogs = 0;
     let itemsCounted = 0;
+    let openingStockCount = 0;
 
     for (const [pId, count] of entries) {
       const prod = catalogList.find(c => c.id === pId);
@@ -681,6 +735,11 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
       itemsCounted++;
       const currentAvailable = storeSummary.stockByProduct.get(pId)?.availableUnits ?? 0;
       const physicalCount = Number(count);
+      const isInitial = !hasRecordedStock(pId);
+
+      if (isInitial) {
+        openingStockCount++;
+      }
 
       newMovements.push({
         id: `mov-stock-${pId}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -689,20 +748,21 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
         type: 'CHECK_ADJUSTMENT' as const,
         quantity: physicalCount,
         unit: 'pcs',
-        notes: `Cek fisik sisa stok: ${physicalCount} pcs (catatan: ${currentAvailable} pcs)`,
+        notes: isInitial
+          ? `Stok awal fisik: ${physicalCount} pcs`
+          : `Cek fisik sisa stok: ${physicalCount} pcs (catatan: ${currentAvailable} pcs)`,
       });
 
-      if (physicalCount < currentAvailable) {
+      // Penjualan HANYA dihitung jika barang BUKAN stok awal dan physicalCount < currentAvailable
+      if (!isInitial && physicalCount < currentAvailable) {
         const soldUnits = currentAvailable - physicalCount;
         const totalSalesValue = soldUnits * prod.sellingPricePerUnit;
-        const unitCost = prod.costPerPack !== null && prod.packSize > 0
-          ? Math.floor(prod.costPerPack / prod.packSize)
-          : null;
+        const latestUnitCost = getProductLatestUnitCost(pId, docPayload, catalogList);
 
         totalPcsSold += soldUnits;
         totalSalesRevenue += totalSalesValue;
-        if (unitCost !== null) {
-          totalCogs += soldUnits * unitCost;
+        if (latestUnitCost !== null) {
+          totalCogs += soldUnits * latestUnitCost;
         }
 
         newSales.push({
@@ -729,6 +789,15 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
       `Pemeriksaan sisa stok (${itemsCounted} barang)`
     );
     if (ok) {
+      let notes = '';
+      if (openingStockCount > 0) {
+        notes = `${openingStockCount} barang disimpan sebagai stok awal. Penjualan mulai dihitung pada cek berikutnya.${totalPcsSold > 0 ? ` ${totalPcsSold} pcs terjual dari barang lain.` : ''}`;
+      } else if (totalPcsSold > 0) {
+        notes = `${totalPcsSold} pcs terjual dihitung otomatis dari selisih catatan dan fisik.`;
+      } else {
+        notes = 'Sisa fisik sesuai atau lebih besar dari catatan. Tidak ada penjualan yang dihitung.';
+      }
+
       setSaveResultModal({
         isOpen: true,
         title: 'Hasil Cek Sisa Stok Disimpan',
@@ -738,9 +807,7 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
         cogsKnown: totalCogs,
         grossProfit: totalSalesRevenue - totalCogs,
         certainty: storeSummary.certainty,
-        notes: totalPcsSold > 0
-          ? `${totalPcsSold} pcs terjual dihitung otomatis dari selisih catatan dan fisik.`
-          : 'Sisa fisik sesuai atau lebih besar dari catatan. Tidak ada penjualan yang dihitung.',
+        notes,
         previousPayload: previousSnapshot,
       });
 
@@ -1232,6 +1299,46 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
               <h1 style={{ fontSize: '20px', fontWeight: 900, margin: '0 0 2px 0' }}>Halo, Juragan 👋</h1>
             </div>
 
+            {/* Kartu Panduan: Isi Stok Awal jika ada barang tanpa catatan stok fisik */}
+            {(() => {
+              const recordedCount = catalogList.filter(p => hasRecordedStock(p.id)).length;
+              const totalCount = catalogList.length;
+              if (recordedCount < totalCount) {
+                return (
+                  <div
+                    className="form-card"
+                    style={{
+                      marginBottom: '12px',
+                      background: 'var(--amber-pale)',
+                      border: '2px solid var(--ink)',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => setCurrentScreen('stok')}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Package size={20} color="var(--orange)" />
+                        <div>
+                          <strong style={{ fontSize: '14px', display: 'block' }}>
+                            Isi stok awal ({recordedCount}/{totalCount})
+                          </strong>
+                          <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                            Ada barang yang belum diisi stok fisik awal
+                          </span>
+                        </div>
+                      </div>
+                      <span className="btn btn-paper" style={{ minHeight: '32px', fontSize: '11px', padding: '4px 10px' }}>
+                        Isi stok →
+                      </span>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             {/* Hero Card: Sisa disetor or Setoran lengkap */}
             {storeSummary.remainingDeposit > 0 ? (
               <div className="hero-card" style={{ marginBottom: '12px' }}>
@@ -1318,13 +1425,31 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                     size={13}
                     onClick={() => {
                       const breakdown = catalogList.map(item => {
-                        const sold = storeSummary.stockByProduct.get(item.id)?.unitsSold || 0;
+                        const prodStock = storeSummary.stockByProduct.get(item.id);
+                        const sold = prodStock?.unitsSold || 0;
+                        const checkCount = prodStock?.checkCount || 0;
+                        const hasStock = hasRecordedStock(item.id);
+
+                        let calculation = 'Belum dicek';
+                        let total = 'Belum dicek';
+
+                        if (!hasStock || checkCount === 0) {
+                          calculation = 'Belum dicek';
+                          total = 'Belum dicek';
+                        } else if (checkCount === 1 && sold === 0) {
+                          calculation = 'Stok awal, belum ada pembanding';
+                          total = 'Stok awal';
+                        } else {
+                          calculation = `terjual ${sold} pcs × Rp ${new Intl.NumberFormat('id-ID').format(item.sellingPricePerUnit)}`;
+                          total = `Rp ${new Intl.NumberFormat('id-ID').format(sold * item.sellingPricePerUnit)}`;
+                        }
+
                         return {
                           name: item.name,
-                          calculation: `${sold} pcs × Rp ${new Intl.NumberFormat('id-ID').format(item.sellingPricePerUnit)}`,
-                          total: `Rp ${new Intl.NumberFormat('id-ID').format(sold * item.sellingPricePerUnit)}`,
+                          calculation,
+                          total,
                         };
-                      }).filter(i => !i.total.includes('Rp 0'));
+                      });
 
                       setDetailModal({
                         title: 'Penjualan',
@@ -1390,15 +1515,15 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                         { label: 'Setoran diterima', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}` },
                         { label: 'Belanja dari setoran', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.purchasesFromSetoran)}`, isNegative: true },
                         { label: 'Pengambilan pribadi', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.ownerWithdrawalsTotal)}`, isNegative: true },
-                        { label: 'Uang di tangan', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}`, isHighlight: true },
+                        { label: 'Uang di tangan', value: storeSummary.isCashInHandCalculable ? `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}` : 'Belum bisa dihitung', isHighlight: true },
                       ],
-                      note: 'Arus uang tunai riil yang saat ini dipegang pemilik toko.',
+                      note: storeSummary.isCashInHandCalculable ? 'Arus uang tunai riil yang saat ini dipegang pemilik toko.' : 'Belum ada setoran kas yang diterima dari karyawan.',
                     })}
                     label="Rincian Uang di tangan"
                   />
                 </div>
-                <strong style={{ fontSize: '12px', marginTop: '4px', wordBreak: 'break-word', color: storeSummary.cashInHand >= 0 ? 'var(--ink)' : 'var(--red)' }}>
-                  Rp {new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}
+                <strong style={{ fontSize: '12px', marginTop: '4px', wordBreak: 'break-word', color: !storeSummary.isCashInHandCalculable ? 'var(--muted)' : storeSummary.cashInHand >= 0 ? 'var(--ink)' : 'var(--red)' }}>
+                  {storeSummary.isCashInHandCalculable ? `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}` : 'Belum bisa dihitung'}
                 </strong>
               </div>
             </div>
@@ -1689,15 +1814,28 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                       <span className="product-info-meta">
                         {item.category} · {item.unit}
                       </span>
-                      {item.costPerPack !== null ? (
-                        <strong className="product-info-price">
-                          Rp {new Intl.NumberFormat('id-ID').format(item.costPerPack)}
-                        </strong>
-                      ) : (
-                        <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700, display: 'inline-block', width: 'fit-content' }}>
-                          Modal: Belum diketahui
-                        </span>
-                      )}
+                      {(() => {
+                        const knownModal = getProductLatestUnitCost(item.id, docPayload, catalogList);
+                        if (knownModal !== null) {
+                          return (
+                            <strong className="product-info-price">
+                              Modal: Rp {new Intl.NumberFormat('id-ID').format(knownModal)}/pcs
+                            </strong>
+                          );
+                        }
+                        if (item.costPerPack !== null) {
+                          return (
+                            <strong className="product-info-price">
+                              Rp {new Intl.NumberFormat('id-ID').format(item.costPerPack)}
+                            </strong>
+                          );
+                        }
+                        return (
+                          <span style={{ fontSize: '10px', background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontWeight: 700, display: 'inline-block', width: 'fit-content' }}>
+                            Modal belum diketahui
+                          </span>
+                        );
+                      })()}
                     </div>
                     <button
                       type="button"
@@ -1705,6 +1843,7 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedProduct(item);
+                        setCustomPurchaseCost('');
                         showToast(`Memilih ${item.name}`);
                       }}
                       aria-label={`Pilih ${item.name}`}
@@ -1716,15 +1855,22 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
             </div>
 
             {/* Form Section: Jumlah & Satuan */}
-            {/* Form Section: Jumlah & Satuan */}
             {(() => {
               const isKemasan = purchaseUnit !== 'pcs';
               const piecesToAdd = isKemasan ? purchaseQty * selectedProduct.packSize : purchaseQty;
-              const totalCost = selectedProduct.costPerPack !== null
-                ? (isKemasan
-                    ? purchaseQty * selectedProduct.costPerPack
-                    : Math.round((purchaseQty * selectedProduct.costPerPack) / selectedProduct.packSize))
-                : parseRupiahInput(customPurchaseCost);
+              const oldModalPerPcs = getProductLatestUnitCost(selectedProduct.id, docPayload, catalogList);
+              const defaultCostPerPack = selectedProduct.costPerPack ?? (oldModalPerPcs ? oldModalPerPcs * selectedProduct.packSize : 0);
+              const defaultTotal = defaultCostPerPack > 0
+                ? (isKemasan ? purchaseQty * defaultCostPerPack : Math.round((purchaseQty * defaultCostPerPack) / selectedProduct.packSize))
+                : 0;
+
+              const totalCost = customPurchaseCost !== ''
+                ? parseRupiahInput(customPurchaseCost)
+                : defaultTotal;
+
+              const newModalPerPcs = piecesToAdd > 0 ? Math.round(totalCost / piecesToAdd) : 0;
+              const isModalNaik = oldModalPerPcs !== null && newModalPerPcs > oldModalPerPcs && totalCost > 0;
+              const modalDiff = isModalNaik ? newModalPerPcs - oldModalPerPcs : 0;
 
               return (
                 <div className="form-card">
@@ -1755,6 +1901,29 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                     </div>
                   </div>
 
+                  {/* Input Total Nota per barang */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <label htmlFor="p-custom-cost" className="field-label" style={{ display: 'block', marginBottom: '4px' }}>
+                      Total nota (Rp)
+                    </label>
+                    <input
+                      id="p-custom-cost"
+                      type="text"
+                      className="field-input"
+                      placeholder={defaultTotal > 0 ? formatRupiahInput(String(defaultTotal)) : 'Contoh: 150.000'}
+                      value={customPurchaseCost !== '' ? formatRupiahInput(customPurchaseCost) : (defaultTotal > 0 ? formatRupiahInput(String(defaultTotal)) : '')}
+                      onChange={(e) => setCustomPurchaseCost(e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                    />
+                    <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
+                      {piecesToAdd > 0 && totalCost > 0 ? (
+                        <span>Modal baru: <strong>Rp {new Intl.NumberFormat('id-ID').format(newModalPerPcs)}</strong> / pcs (menggantikan modal lama)</span>
+                      ) : (
+                        <span>Isi total nota untuk menghitung modal per pcs</span>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Sumber Uang Belanja */}
                   <div style={{ marginBottom: '14px' }}>
                     <label className="field-label" style={{ display: 'block', marginBottom: '6px' }}>Sumber Uang</label>
@@ -1767,7 +1936,7 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                           if (typeof localStorage !== 'undefined') localStorage.setItem('toko_sakala_belanja_source', 'SETORAN');
                         }}
                       >
-                        Dari setoran (diputar)
+                        Untung bersih toko
                       </button>
                       <button
                         type="button"
@@ -1777,51 +1946,51 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                           if (typeof localStorage !== 'undefined') localStorage.setItem('toko_sakala_belanja_source', 'PRIBADI');
                         }}
                       >
-                        Uang lain (pribadi)
+                        Uang pribadi
                       </button>
                     </div>
                   </div>
 
-                  {/* Jika modal kemasan belum ada di master katalog */}
-                  {selectedProduct.costPerPack === null && (
-                    <div style={{ marginBottom: '12px' }}>
-                      <label htmlFor="p-custom-cost" className="field-label" style={{ display: 'block', marginBottom: '4px' }}>
-                        Nominal Belanja Nota (Rp)
-                      </label>
-                      <input
-                        id="p-custom-cost"
-                        type="text"
-                        className="field-input"
-                        placeholder="Contoh: 150.000"
-                        value={customPurchaseCost ? formatRupiahInput(customPurchaseCost) : ''}
-                        onChange={(e) => setCustomPurchaseCost(e.target.value)}
-                        style={{ width: '100%', boxSizing: 'border-box' }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Ringkasan Satu Baris dengan ⓘ */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f4f4f5', borderRadius: '8px', marginBottom: '14px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {/* Ringkasan Satu Baris dengan ⓘ dan Peringatan Modal Naik */}
+                  <div style={{ padding: '10px 12px', background: '#f4f4f5', borderRadius: '8px', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--ink)' }}>
                         +{piecesToAdd} pcs · Rp {new Intl.NumberFormat('id-ID').format(totalCost)}
                       </span>
+                      <InfoButton
+                        onClick={() => setDetailModal({
+                          title: 'Ringkasan Belanja',
+                          formula: 'Modal per pcs = Total nota ÷ pcs masuk (modal terbaru)',
+                          rows: [
+                            { label: 'Jumlah barang', value: `${purchaseQty} ${isKemasan ? selectedProduct.unit : 'pcs'}` },
+                            { label: 'Konversi fisik masuk', value: `+${piecesToAdd} pcs` },
+                            { label: 'Total nota belanja', value: `Rp ${new Intl.NumberFormat('id-ID').format(totalCost)}`, isHighlight: true },
+                            { label: 'Modal baru per pcs', value: `Rp ${new Intl.NumberFormat('id-ID').format(newModalPerPcs)} / pcs` },
+                            { label: 'Sumber dana', value: purchaseSourceMoney === 'SETORAN' ? 'Untung bersih toko' : 'Uang pribadi' },
+                          ],
+                          note: 'Modal per pcs terbaru ini akan langsung menggantikan modal lama untuk perhitungan modal barang terjual.',
+                        })}
+                        label="Rincian ringkasan belanja"
+                      />
                     </div>
-                    <InfoButton
-                      onClick={() => setDetailModal({
-                        title: 'Ringkasan Belanja',
-                        formula: isKemasan ? 'jumlah × harga kemasan' : 'jumlah × (harga kemasan ÷ isi per kemasan)',
-                        rows: [
-                          { label: 'Jumlah barang', value: `${purchaseQty} ${isKemasan ? selectedProduct.unit : 'pcs'}` },
-                          { label: 'Konversi fisik masuk', value: `+${piecesToAdd} pcs` },
-                          { label: 'Harga per satuan', value: `Rp ${new Intl.NumberFormat('id-ID').format(isKemasan ? (selectedProduct.costPerPack ?? 0) : Math.round((selectedProduct.costPerPack ?? 0) / selectedProduct.packSize))}` },
-                          { label: 'Total belanja', value: `Rp ${new Intl.NumberFormat('id-ID').format(totalCost)}`, isHighlight: true },
-                          { label: 'Sumber dana', value: purchaseSourceMoney === 'SETORAN' ? 'Uang setoran diputar' : 'Uang lain/pribadi' },
-                        ],
-                        note: 'Belanja dari uang setoran tidak memotong kewajiban setoran karyawan di laci toko.',
-                      })}
-                      label="Rincian ringkasan belanja"
-                    />
+                    {isModalNaik && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
+                        <span className="status-tag warn" style={{ background: 'var(--amber-pale)', color: 'var(--ink)', fontWeight: 800, fontSize: '11px', padding: '3px 8px', borderRadius: '6px' }}>
+                          Modal naik Rp {new Intl.NumberFormat('id-ID').format(modalDiff)} per pcs
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-paper"
+                          style={{ minHeight: '32px', fontSize: '11px', padding: '4px 10px' }}
+                          onClick={() => {
+                            setNewSellingPriceInput(String(selectedProduct.sellingPricePerUnit));
+                            setShowPriceCheckModal(true);
+                          }}
+                        >
+                          Cek harga jual
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* CTA: Simpan Pembelian ke Penyimpanan */}
@@ -1914,9 +2083,11 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                   ? `${Math.floor(currentAvailable / item.packSize)} ${item.unit.split(' ')[0]}${currentAvailable % item.packSize > 0 ? ` + ${currentAvailable % item.packSize} pcs` : ''}`
                   : null;
 
+                const hasStock = hasRecordedStock(item.id);
+                const isStokAwal = !hasStock;
                 const isCheckedToday = checkedTodayIds.has(item.id);
-                const physicalVal = isFilled ? Number(count) : currentAvailable;
-                const soldVal = Math.max(0, currentAvailable - physicalVal);
+                const physicalVal = isFilled ? Number(count) : (isStokAwal ? 0 : currentAvailable);
+                const soldVal = isStokAwal ? 0 : Math.max(0, currentAvailable - physicalVal);
 
                 return (
                   <div key={item.id} className="stock-check-card" style={{ padding: '10px 12px' }}>
@@ -1927,6 +2098,11 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                       <div className="stock-card-body">
                         <div className="stock-card-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span style={{ fontWeight: 900 }}>{item.name}</span>
+                          {isStokAwal && (
+                            <span className="status-tag warn" style={{ fontSize: '10px', padding: '1px 6px', background: 'var(--amber-pale)', color: 'var(--ink)' }}>
+                              Stok awal
+                            </span>
+                          )}
                           {isCheckedToday && (
                             <span className="status-tag good" style={{ fontSize: '10px', padding: '1px 6px' }}>
                               ✓ Dicek hari ini
@@ -1934,21 +2110,27 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                           )}
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span>Catatan: {currentAvailable} pcs</span>
+                          <span>{isStokAwal ? 'Belum ada catatan stok' : `Catatan: ${currentAvailable} pcs`}</span>
                           <InfoButton
                             size={13}
                             onClick={() => setDetailModal({
-                              title: `Cek Sisa — ${item.name}`,
-                              formula: 'Terjual = Catatan − Sisa fisik',
-                              rows: [
+                              title: `${isStokAwal ? 'Stok Awal' : 'Cek Sisa'} — ${item.name}`,
+                              formula: isStokAwal ? 'Stok awal baseline (penjualan dihitung pada cek berikutnya)' : 'Terjual = Catatan − Sisa fisik',
+                              rows: isStokAwal ? [
+                                { label: 'Status barang', value: 'Stok awal fisik' },
+                                { label: 'Sisa fisik diinput', value: `${isFilled ? count : 0} pcs`, isHighlight: true },
+                                { label: 'Terjual dihitung', value: '0 pcs (mulai cek berikutnya)' },
+                              ] : [
                                 { label: 'Catatan stok', value: `${currentAvailable} pcs` },
                                 { label: 'Sisa fisik diinput', value: `${physicalVal} pcs` },
                                 { label: 'Terjual', value: `${soldVal} pcs`, isHighlight: true },
                                 { label: 'Penjualan', value: `Rp ${new Intl.NumberFormat('id-ID').format(soldVal * item.sellingPricePerUnit)}` },
                               ],
-                              note: soldVal > 0
-                                ? `Menghasilkan estimasi penjualan Rp ${new Intl.NumberFormat('id-ID').format(soldVal * item.sellingPricePerUnit)}.`
-                                : 'Tidak ada penjualan baru yang dihitung.',
+                              note: isStokAwal
+                                ? 'Pencatatan fisik pertama ini menjadi baseline stok awal. Tidak ada penjualan yang dihitung sekarang.'
+                                : (soldVal > 0
+                                  ? `Menghasilkan estimasi penjualan Rp ${new Intl.NumberFormat('id-ID').format(soldVal * item.sellingPricePerUnit)}.`
+                                  : 'Tidak ada penjualan baru yang dihitung.'),
                             })}
                             label={`Rincian stok ${item.name}`}
                           />
@@ -1963,7 +2145,7 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                             onClick={() => {
                               setStockCounts(prev => ({
                                 ...prev,
-                                [item.id]: Math.max(0, (prev[item.id] ?? currentAvailable) - 1)
+                                [item.id]: Math.max(0, (prev[item.id] ?? (isStokAwal ? 0 : currentAvailable)) - 1)
                               }));
                             }}
                           >
@@ -1973,7 +2155,8 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                             type="text"
                             className="stepper-input"
                             aria-label={`Sisa fisik ${item.name}`}
-                            value={isFilled ? count : currentAvailable}
+                            value={isFilled ? count : (isStokAwal ? '' : currentAvailable)}
+                            placeholder={isStokAwal ? '0' : String(currentAvailable)}
                             onChange={(e) => {
                               const val = e.target.value.trim();
                               if (val === '') {
@@ -1993,7 +2176,7 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                             onClick={() => {
                               setStockCounts(prev => ({
                                 ...prev,
-                                [item.id]: (prev[item.id] ?? currentAvailable) + 1
+                                [item.id]: (prev[item.id] ?? (isStokAwal ? 0 : currentAvailable)) + 1
                               }));
                             }}
                           >
@@ -2440,14 +2623,45 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                     <span>Penjualan</span>
                     <InfoButton
                       size={12}
-                      onClick={() => setDetailModal({
-                        title: 'Penjualan',
-                        formula: 'Σ terjual × harga jual satuan',
-                        rows: [
-                          { label: 'Penjualan terhitung', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}`, isHighlight: true },
-                        ],
-                        note: 'Dihitung dari selisih cek sisa fisik barang.',
-                      })}
+                      onClick={() => {
+                        const breakdown = catalogList.map(item => {
+                          const prodStock = storeSummary.stockByProduct.get(item.id);
+                          const sold = prodStock?.unitsSold || 0;
+                          const checkCount = prodStock?.checkCount || 0;
+                          const hasStock = hasRecordedStock(item.id);
+
+                          let calculation = 'Belum dicek';
+                          let total = 'Belum dicek';
+
+                          if (!hasStock || checkCount === 0) {
+                            calculation = 'Belum dicek';
+                            total = 'Belum dicek';
+                          } else if (checkCount === 1 && sold === 0) {
+                            calculation = 'Stok awal, belum ada pembanding';
+                            total = 'Stok awal';
+                          } else {
+                            calculation = `terjual ${sold} pcs × Rp ${new Intl.NumberFormat('id-ID').format(item.sellingPricePerUnit)}`;
+                            total = `Rp ${new Intl.NumberFormat('id-ID').format(sold * item.sellingPricePerUnit)}`;
+                          }
+
+                          return {
+                            name: item.name,
+                            calculation,
+                            total,
+                          };
+                        });
+
+                        setDetailModal({
+                          title: 'Penjualan',
+                          formula: 'Σ (terjual × harga jual)',
+                          rows: [
+                            { label: 'Penjualan terhitung', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.grossSales.min)}`, isHighlight: true },
+                          ],
+                          note: 'Dihitung dari selisih cek sisa fisik barang.',
+                          showItemsLink: breakdown.length > 0,
+                          itemsBreakdown: breakdown,
+                        });
+                      }}
                       label="Rincian Penjualan"
                     />
                   </div>
@@ -2556,6 +2770,32 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                     )}
                   </strong>
                 </div>
+
+                <div className="summary-box-row" style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed var(--line)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontSize: '12px' }}>Laba setelah modal</span>
+                    <InfoButton
+                      size={12}
+                      onClick={() => setDetailModal({
+                        title: 'Laba Setelah Modal',
+                        formula: 'Untung Bersih − modal barang terjual',
+                        rows: [
+                          { label: 'Untung bersih', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.untungBersih?.min ?? 0)}` },
+                          { label: 'Modal barang terjual', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cogsKnown)}`, isNegative: true },
+                          { label: 'Laba setelah modal', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.labaSetelahModal?.min ?? 0)}`, isHighlight: true },
+                        ],
+                        note: 'Laba bersih toko setelah memperhitungkan pengembalian modal barang yang laku terjual.',
+                      })}
+                      label="Rincian Laba Setelah Modal"
+                    />
+                  </div>
+                  <strong style={{
+                    fontSize: '13px',
+                    color: (storeSummary.labaSetelahModal?.min ?? 0) >= 0 ? 'var(--ink)' : 'var(--red)'
+                  }}>
+                    Rp {new Intl.NumberFormat('id-ID').format(storeSummary.labaSetelahModal?.min ?? 0)}
+                  </strong>
+                </div>
               </div>
 
               {/* Blok 2: Uang */}
@@ -2649,14 +2889,15 @@ const InfoButton: React.FC<{ onClick: () => void; label?: string; size?: number 
                           { label: 'Setoran diterima', value: `+Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.totalDeposits)}` },
                           { label: 'Belanja dari setoran', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.purchasesFromSetoran)}`, isNegative: true },
                           { label: 'Pengambilan pribadi', value: `-Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.ownerWithdrawalsTotal)}`, isNegative: true },
-                          { label: 'Uang di tangan', value: `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}`, isHighlight: true },
+                          { label: 'Uang di tangan', value: storeSummary.isCashInHandCalculable ? `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}` : 'Belum bisa dihitung', isHighlight: true },
                         ],
+                        note: storeSummary.isCashInHandCalculable ? undefined : 'Belum ada setoran kas yang diterima dari karyawan.',
                       })}
                       label="Rincian Uang di Tangan"
                     />
                   </div>
-                  <strong style={{ fontSize: '13px', color: storeSummary.cashInHand >= 0 ? 'var(--ink)' : 'var(--red)' }}>
-                    Rp {new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}
+                  <strong style={{ fontSize: '13px', color: !storeSummary.isCashInHandCalculable ? 'var(--muted)' : storeSummary.cashInHand >= 0 ? 'var(--ink)' : 'var(--red)' }}>
+                    {storeSummary.isCashInHandCalculable ? `Rp ${new Intl.NumberFormat('id-ID').format(storeSummary.cashInHand)}` : 'Belum bisa dihitung'}
                   </strong>
                 </div>
               </div>
@@ -4275,7 +4516,7 @@ NOTIFY pgrst, 'reload schema';`;
             <div style={{ marginBottom: '14px', padding: '10px 12px', background: 'var(--paper)', borderRadius: '8px', border: '1px solid var(--line)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                 <label htmlFor="np-cost" style={{ fontSize: '11px', fontWeight: 800 }}>
-                  Modal Kemasan Pembelian (Rp):
+                  Modal Kemasan Pembelian (Rp) (Opsional):
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: 'var(--muted)', cursor: 'pointer' }}>
                   <input
@@ -4293,7 +4534,7 @@ NOTIFY pgrst, 'reload schema';`;
                   min="0"
                   step="1000"
                   className="field-input"
-                  placeholder="Contoh: 96000"
+                  placeholder="Contoh: 96.000 (Opsional)"
                   value={newProdCostPerPack}
                   onChange={(e) => setNewProdCostPerPack(e.target.value)}
                   onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
@@ -4651,6 +4892,109 @@ NOTIFY pgrst, 'reload schema';`;
           </div>
         </div>
       )}
+
+      {/* Modal Dialog: Cek & Ubah Harga Jual saat Modal Naik */}
+      {showPriceCheckModal && (() => {
+        const oldModalPerPcs = getProductLatestUnitCost(selectedProduct.id, docPayload, catalogList);
+        const isKemasan = purchaseUnit !== 'pcs';
+        const piecesToAdd = isKemasan ? purchaseQty * selectedProduct.packSize : purchaseQty;
+        const defaultCostPerPack = selectedProduct.costPerPack ?? (oldModalPerPcs ? oldModalPerPcs * selectedProduct.packSize : 0);
+        const defaultTotal = defaultCostPerPack > 0
+          ? (isKemasan ? purchaseQty * defaultCostPerPack : Math.round((purchaseQty * defaultCostPerPack) / selectedProduct.packSize))
+          : 0;
+        const totalCost = customPurchaseCost !== '' ? parseRupiahInput(customPurchaseCost) : defaultTotal;
+        const newModalPerPcs = piecesToAdd > 0 ? Math.round(totalCost / piecesToAdd) : 0;
+        const newSellPrice = Math.max(0, parseRupiahInput(newSellingPriceInput));
+        const currentMargin = selectedProduct.sellingPricePerUnit - newModalPerPcs;
+        const newMargin = newSellPrice - newModalPerPcs;
+
+        return (
+          <div className="modal-backdrop" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 10000, padding: '16px' }}>
+            <div className="form-card" style={{ maxWidth: '440px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '20px' }}>{selectedProduct.icon}</span>
+                  <h3 className="form-card-title" style={{ margin: 0, fontSize: '15px' }}>Cek Harga Jual — {selectedProduct.name}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPriceCheckModal(false)}
+                  style={{ padding: '6px 10px', minHeight: '44px', minWidth: '44px', fontWeight: 900 }}
+                  aria-label="Tutup"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', background: '#f4f4f5', padding: '10px 12px', borderRadius: '8px' }}>
+                <div className="summary-box-row">
+                  <span>Modal lama:</span>
+                  <strong style={{ color: 'var(--muted)' }}>
+                    Rp {new Intl.NumberFormat('id-ID').format(oldModalPerPcs ?? 0)} / pcs
+                  </strong>
+                </div>
+                <div className="summary-box-row">
+                  <span>Modal baru belanja:</span>
+                  <strong style={{ color: 'var(--orange)' }}>
+                    Rp {new Intl.NumberFormat('id-ID').format(newModalPerPcs)} / pcs
+                  </strong>
+                </div>
+                <div className="summary-box-row">
+                  <span>Harga jual saat ini:</span>
+                  <strong>Rp {new Intl.NumberFormat('id-ID').format(selectedProduct.sellingPricePerUnit)} / pcs</strong>
+                </div>
+                <div className="summary-box-row" style={{ paddingTop: '6px', borderTop: '1px dashed var(--line)' }}>
+                  <span>Untung kotor saat ini:</span>
+                  <strong style={{ color: currentMargin >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    Rp {new Intl.NumberFormat('id-ID').format(currentMargin)} / pcs
+                  </strong>
+                </div>
+              </div>
+
+              <div className="field-group" style={{ marginBottom: '14px' }}>
+                <label className="field-label" htmlFor="new-sell-price">
+                  Perbarui Harga Jual (Rp / pcs)
+                </label>
+                <input
+                  id="new-sell-price"
+                  type="text"
+                  inputMode="numeric"
+                  className="field-input"
+                  placeholder={`Contoh: ${selectedProduct.sellingPricePerUnit}`}
+                  value={newSellingPriceInput ? formatRupiahInput(newSellingPriceInput) : ''}
+                  onChange={(e) => setNewSellingPriceInput(e.target.value)}
+                  onFocus={(e) => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                />
+                {newSellPrice > 0 && (
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
+                    Untung baru: <strong style={{ color: newMargin >= 0 ? 'var(--green)' : 'var(--red)' }}>Rp {new Intl.NumberFormat('id-ID').format(newMargin)} / pcs</strong>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => handleUpdateSellingPrice(newSellPrice)}
+                  disabled={newSellPrice <= 0}
+                  style={{ minHeight: '44px' }}
+                >
+                  Simpan Harga
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-paper"
+                  onClick={() => setShowPriceCheckModal(false)}
+                  style={{ minHeight: '44px' }}
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal Dialog: Catat Ambil Uang Pribadi */}
       {showWithdrawModal && (

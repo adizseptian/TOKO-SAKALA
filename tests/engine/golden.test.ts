@@ -32,7 +32,7 @@ describe("TOKO SAKALA engine — golden examples", () => {
     expect(result.totals.storeCashAfterDeposits).toEqual({ min: 329000, max: 329000 });
   });
 
-  it("menggunakan rata-rata modal bergerak untuk restock", () => {
+  it("menggunakan modal terbaru dari belanja terakhir (menggantikan modal lama)", () => {
     const products: Product[] = [{ ...mie, sellingPrice: 6000 }];
     const events: AppEvent[] = [
       { id: "p1", seq: 1, occurredAt: "2026-10-19T08:00:00+07:00", type: "purchase", productId: "mie", packs: 1, unitsPerPack: 20, totalCost: 80000, sourceMoney: "STORE" },
@@ -41,10 +41,10 @@ describe("TOKO SAKALA engine — golden examples", () => {
     ];
     const result = calculate({ products, events, asOf });
     expect(result.products[0].unitsSold).toBe(35);
-    expect(result.products[0].costOfSoldKnown).toBe(143500);
-    expect(result.products[0].knownInventoryValue).toBe(20500);
+    expect(result.products[0].costOfSoldKnown).toBe(147000); // 35 pcs × 4.200 modal terbaru
+    expect(result.products[0].knownInventoryValue).toBe(21000); // 5 pcs × 4.200
     expect(result.totals.salesRevenue).toEqual({ min: 210000, max: 210000 });
-    expect(result.totals.profit).toEqual({ min: 66500, max: 66500 });
+    expect(result.totals.profit).toEqual({ min: 63000, max: 63000 });
   });
 
   it("tidak membuat penjualan negatif ketika sisa melebihi stok tersedia", () => {
