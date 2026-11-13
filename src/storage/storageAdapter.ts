@@ -82,6 +82,7 @@ export function createDefaultPayload(): TokoSakalaPayload {
     expenses: [],
     deposits: [],
     ownerWithdrawals: [],
+    otherIncomes: [],
     closedPeriods: [],
     corrections: [],
     settings: {

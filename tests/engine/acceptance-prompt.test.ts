@@ -93,6 +93,7 @@ describe('Uji Penerimaan Alur Uang & Aturan Bisnis (Section 5)', () => {
         },
       ],
       ownerWithdrawals: [],
+      otherIncomes: [],
       closedPeriods: [],
       corrections: [],
       settings: {

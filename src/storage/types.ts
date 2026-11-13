@@ -22,6 +22,10 @@ export const StorageProductSchema = z.object({
   sellingPricePerUnit: RupiahSchema,
   icon: z.string().default('📦'),
   active: z.boolean().default(true),
+  discountDay: z.enum(['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']).nullable().optional(),
+  discountPerUnit: RupiahSchema.nullable().optional(),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
 });
 
 export const StockMovementSchema = z.object({
@@ -32,6 +36,21 @@ export const StockMovementSchema = z.object({
   quantity: QuantitySchema,
   unit: z.string().trim().min(1),
   notes: z.string().max(200).optional(),
+  discountSoldUnits: QuantitySchema.nullable().optional(),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
+});
+
+export const OtherIncomeRecordSchema = z.object({
+  id: z.string().min(1),
+  occurredAt: z.string().datetime({ offset: true }),
+  name: z.string().trim().min(1).max(120),
+  nominal: RupiahSchema.refine((v) => v > 0),
+  quantity: QuantitySchema.refine((v) => v > 0),
+  totalAmount: RupiahSchema,
+  notes: z.string().max(250).optional(),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
 });
 
 export const PurchaseRecordSchema = z.object({
@@ -47,6 +66,8 @@ export const PurchaseRecordSchema = z.object({
     return val;
   }, z.enum(['LACI', 'SETORAN', 'PRIBADI'])).default('SETORAN'),
   receiptRef: z.string().max(60).optional(),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
 });
 
 export const SalesRecordSchema = z.object({
@@ -57,6 +78,8 @@ export const SalesRecordSchema = z.object({
   unitSellingPrice: RupiahSchema,
   totalSalesValue: RupiahSchema,
   isCalculatedFromStockCheck: z.boolean().default(true),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
 });
 
 export const ExpenseRecordSchema = z.object({
@@ -69,6 +92,8 @@ export const ExpenseRecordSchema = z.object({
     if (val === 'PERSONAL') return 'PRIBADI';
     return val;
   }, z.enum(['LACI', 'SETORAN', 'PRIBADI'])).default('LACI'),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
 });
 
 export const OwnerWithdrawalRecordSchema = z.object({
@@ -76,6 +101,8 @@ export const OwnerWithdrawalRecordSchema = z.object({
   occurredAt: z.string().datetime({ offset: true }),
   amount: RupiahSchema.refine((v) => v > 0),
   notes: z.string().max(250).optional(),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
 });
 
 export const DepositRecordSchema = z.object({
@@ -85,6 +112,8 @@ export const DepositRecordSchema = z.object({
   receivedAmount: RupiahSchema, // Uang riil yang diterima dari karyawan
   discrepancy: z.number().int().safe(), // Positif = lebih, Negatif = kurang
   notes: z.string().max(250).optional(),
+  isSample: z.boolean().optional(),
+  seedId: z.string().optional(),
 });
 
 export const ClosedPeriodSchema = z.object({
@@ -129,6 +158,7 @@ export const TokoSakalaPayloadSchema = z.object({
   expenses: z.array(ExpenseRecordSchema).default([]),
   deposits: z.array(DepositRecordSchema).default([]),
   ownerWithdrawals: z.array(OwnerWithdrawalRecordSchema).default([]),
+  otherIncomes: z.array(OtherIncomeRecordSchema).optional().default([]),
   closedPeriods: z.array(ClosedPeriodSchema).default([]),
   corrections: z.array(CorrectionRecordSchema).default([]),
   settings: AppSettingsSchema.default({
@@ -155,10 +185,12 @@ export const TokoSakalaDocumentSchema = z.object({
 export type TokoSakalaPayload = z.infer<typeof TokoSakalaPayloadSchema>;
 export type TokoSakalaDocument = z.infer<typeof TokoSakalaDocumentSchema>;
 export type StorageProduct = z.infer<typeof StorageProductSchema>;
+export type StockMovementRecord = z.infer<typeof StockMovementSchema>;
 export type PurchaseRecord = z.infer<typeof PurchaseRecordSchema>;
 export type ExpenseRecord = z.infer<typeof ExpenseRecordSchema>;
 export type DepositRecord = z.infer<typeof DepositRecordSchema>;
 export type OwnerWithdrawalRecord = z.infer<typeof OwnerWithdrawalRecordSchema>;
+export type OtherIncomeRecord = z.infer<typeof OtherIncomeRecordSchema>;
 
 /**
  * Migrasi data lama dari STORE | PERSONAL ke LACI | SETORAN | PRIBADI
@@ -173,6 +205,7 @@ export function migrateLegacyPayload(raw: any): TokoSakalaPayload {
       expenses: [],
       deposits: [],
       ownerWithdrawals: [],
+      otherIncomes: [],
       closedPeriods: [],
       corrections: [],
       settings: {
@@ -202,12 +235,14 @@ export function migrateLegacyPayload(raw: any): TokoSakalaPayload {
   });
 
   const ownerWithdrawals = Array.isArray(raw.ownerWithdrawals) ? raw.ownerWithdrawals : [];
+  const otherIncomes = Array.isArray(raw.otherIncomes) ? raw.otherIncomes : [];
 
   return {
     ...raw,
     purchaseRecords: purchases,
     expenses,
     ownerWithdrawals,
+    otherIncomes,
     products: raw.products || [],
     stockMovements: raw.stockMovements || [],
     salesRecords: raw.salesRecords || [],

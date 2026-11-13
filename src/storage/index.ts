@@ -7,3 +7,4 @@ export * from './googleAuth';
 export * from './indexeddbAdapter';
 export * from './supabaseAdapter';
 export * from './syncEngine';
+export * from './sampleData';

@@ -6,6 +6,7 @@ import {
   type SaveResult,
   type RestoreResult,
   TokoSakalaDocumentSchema,
+  TokoSakalaPayloadSchema,
 } from './types';
 import { type StorageAdapter, createDefaultPayload } from './storageAdapter';
 import { computeSha256, verifyChecksum } from './checksum';
@@ -82,15 +83,16 @@ export class MockStorageAdapter implements StorageAdapter {
     }
 
     if (!this.currentDoc) {
+      const parsedPayload = TokoSakalaPayloadSchema.parse(this.initialPayload);
       const now = new Date().toISOString();
-      const checksum = await computeSha256(this.initialPayload);
+      const checksum = await computeSha256(parsedPayload);
       const newDoc: TokoSakalaDocument = {
         app: 'toko-sakala',
         schemaVersion: 1,
         dataVersion: 1,
         updatedAt: now,
         checksum,
-        payload: this.initialPayload,
+        payload: parsedPayload,
       };
       this.currentDoc = TokoSakalaDocumentSchema.parse(newDoc);
     }
@@ -128,9 +130,10 @@ export class MockStorageAdapter implements StorageAdapter {
       };
     }
 
+    const parsedPayload = TokoSakalaPayloadSchema.parse(payload);
     const nextVersion = (this.currentDoc?.dataVersion ?? 0) + 1;
     const now = new Date().toISOString();
-    const checksum = await computeSha256(payload);
+    const checksum = await computeSha256(parsedPayload);
 
     const updatedDoc: TokoSakalaDocument = {
       app: 'toko-sakala',
@@ -138,7 +141,7 @@ export class MockStorageAdapter implements StorageAdapter {
       dataVersion: nextVersion,
       updatedAt: now,
       checksum,
-      payload,
+      payload: parsedPayload,
     };
 
     // Validasi skema Zod sebelum commit
