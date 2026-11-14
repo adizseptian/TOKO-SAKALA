@@ -1,9 +1,9 @@
 # 00 — AUDIT EXECUTIVE SUMMARY (MODE A — TOKO SAKALA)
 
-**Tanggal Audit & Rekonsiliasi:** 13 November 2026  
+**Tanggal Pemutakhiran & Penutupan Mode A:** 14 November 2026 *(audit awal 13 November 2026)*  
 **Mode Kerja:** MODE A — DOCUMENTATION RECONCILIATION ONLY (**nol** perubahan ke `src/*`, SQL, CSS, test, config, Git history, maupun dokumen sumber lama)  
-**Status Fase:** **`MODE A DOCUMENT RECONCILIATION — READY FOR OWNER SIGN-OFF`** | **Mode B:** **`NOT AUTHORIZED`**  
-**Basis Keputusan Owner:** Keputusan **Deliverable 6** (8 butir), **Deliverable 7 Forensic Audit**, **Final Decision `NOD-01..04`**, dan **Deliverable 8 (`NOD-05`, `NOD-06`, `NOD-03B`)**.
+**Status Fase:** **`MODE A CLOSED — OWNER SIGNED OFF`** *(14 November 2026)* | **Mode B:** **`NOT AUTHORIZED`**  
+**Basis Keputusan Owner:** Keputusan **Deliverable 6** (8 butir), **Deliverable 7 Forensic Audit**, **Final Decision `NOD-01..04`**, **Deliverable 8 (`NOD-05`, `NOD-06`, `NOD-03B`)**, serta **Persetujuan Penutupan Mode A oleh Owner (14 November 2026)** *(penutupan dokumentasi Mode A tidak berarti otorisasi implementasi Mode B, persetujuan baseline teknis Mode B, atau pernyataan aplikasi siap produksi)*.
 
 ---
 
@@ -16,7 +16,7 @@
 | **Keamanan Cloud Supabase & Produksi Data Nyata** | `BLOCKED (CRITICAL)` | `migrations/001` & `002` membuka RLS `FOR ALL USING (true)` ke role `anon`; dua client Supabase terpisah (`supabaseClient.ts` vs `supabaseAdapter.ts`); dokumen **`TRD v2`** & **Edge Function / RPC** tidak ada di workspace (`NOD-01: LOCKED — IMPLEMENTATION BLOCKED`). **Dilarang dinyatakan aman atau siap produksi cloud.** |
 | **Integritas Hitungan Laba, Modal & Laporan** | `BLOCKED (CRITICAL)` | `engineBridge.ts` melabeli `Penjualan − Diskon` sebagai *"Untung Kotor"* dan menghitung *"Untung Bersih"* tanpa `COGS` maupun rugi rusak/dipakai; `LOSS_USED` tidak dipetakan ke `calculate.ts`; `Laporan` mengabaikan `ringkasanPeriod`; **`NOD-05` (`LOCKED — MOVING AVERAGE`)** mengonfirmasi `calculate.ts`, `contract.ts`, `engineBridge.ts`, `App.tsx`, & `golden-rumus-pemilik.test.ts` menyimpang memakai `Latest Unit Cost` serta melebur `unknownUnits` ke `knownUnits` (`calculate.ts:141–143`). |
 | **Konsistensi UI dengan TOKO MODE (`G4 v2.1`)** | `HIGH DRIFT` | `.floating-dock` memakai glassmorphism blur + glow, `.live-pulse-beacon` beranimasi pulse, `App.tsx` berisi `754` inline `style={{...}}`, `229` deklarasi font `<12px`, `10` elemen `<div role="button">` tanpa `onKeyDown`, dan route mati `'asisten'`. |
-| **Tata Kelola Git & Baseline Mode B (`NOD-06`)** | `LOCKED — PRESERVE HISTORY` | HEAD `main` saat ini adalah `2b1b352de4ebc6446fa5dc8ad469c357c657567a` (`2b1b352`). Objek audit historis `918d36560660cd183f603f6ea72238a96f031796` (`918d365`, `"feat(engine): add discount support and sample data management"`) dibanding baseline `9e64039be553d0abecd56c07f7f9def57d596c1e` (`9e64039`) mencakup **25 file berubah** di GitHub Compare: `12` dokumentasi audit, `12` file source/CSS/test/konfigurasi, dan `1` `.gitignore` (tanpa otorisasi Mode B; tidak ada video MP4 dalam compare tersebut). Riwayat Git wajib dijaga utuh; klasifikasi forensik selektif & proposal baseline didokumentasikan di `10_FINAL_MODE_A_RECONCILIATION_REPORT.md` §9. *(Snapshot kontainer `/app/applet` sendiri tidak menyertakan direktori `.git`).* |
+| **Tata Kelola Git & Baseline Mode B (`NOD-06`)** | `LOCKED — PRESERVE HISTORY` | `Verified HEAD immediately before the Mode A closure documentation commit: 4700ea53a53d1c8711d7a99b0a9805456e2ec3d1`. Objek audit historis `918d36560660cd183f603f6ea72238a96f031796` (`918d365`, `"feat(engine): add discount support and sample data management"`) dibanding baseline `9e64039be553d0abecd56c07f7f9def57d596c1e` (`9e64039`) mencakup **25 file berubah** di GitHub Compare: `12` dokumentasi audit, `12` file source/CSS/test/konfigurasi, dan `1` `.gitignore` (tanpa otorisasi Mode B; tidak ada video MP4 dalam compare tersebut). Riwayat Git wajib dijaga utuh; klasifikasi forensik selektif & proposal baseline didokumentasikan di `10_FINAL_MODE_A_RECONCILIATION_REPORT.md` §9. *(Snapshot kontainer `/app/applet` sendiri tidak menyertakan direktori `.git`).* |
 
 ---
 
@@ -97,5 +97,5 @@
 8. `07_ACCESSIBILITY_RESPONSIVE_QA.md` — Register QA WCAG 2.2 AA (termasuk protokol `NOD-02`) & 7 breakpoint (`320–1440 px`) beserta protokol uji browser Mode B (`NOT RUN`).
 9. `08_DECISION_LOG.md` — Keputusan final `LOCKED` (`DL-01..13`), `CONDITIONAL`/`DEFERRED` (`CD-01..02`), `RECOMMENDED`, `NEEDS OWNER DECISION` (`NOD-01`), dan `BLOCKER`.
 10. `09_MODE_B_IMPLEMENTATION_PLAN.md` — Proposal rencana bertahap dengan gerbang wajib **`MODE B NOT AUTHORIZED`**.
-11. **`10_FINAL_MODE_A_RECONCILIATION_REPORT.md`** — Laporan rekonsiliasi final Mode A, matriks konsistensi lintas dokumen, klasifikasi forensik `918d3656` (`NOD-06`), dan paket sign-off Owner (`READY FOR OWNER SIGN-OFF` — `MODE B: NOT AUTHORIZED`).
+11. **`10_FINAL_MODE_A_RECONCILIATION_REPORT.md`** — Laporan rekonsiliasi final Mode A, matriks konsistensi lintas dokumen, klasifikasi forensik `918d3656` (`NOD-06`), dan catatan penutupan Owner (`MODE A CLOSED — OWNER SIGNED OFF` pada 14 November 2026 — `MODE B: NOT AUTHORIZED`).
 

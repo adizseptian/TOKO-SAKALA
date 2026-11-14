@@ -4,15 +4,15 @@
 
 > [!CAUTION]
 > **`MODE B NOT AUTHORIZED` — DILARANG KERAS MEMULAI IMPLEMENTASI LOKAL MAUPUN CLOUD.**  
-> Dokumen ini hanya berisi **rencana usulan (proposals only)** untuk dievaluasi oleh Owner setelah paket Mode A ditandatangani. Tidak ada satu pun fase di bawah ini yang sedang diotorisasi atau siap dieksekusi sekarang. Sesuai **`NOD-01` (`LOCKED — IMPLEMENTATION BLOCKED`)**, pekerjaan Fase 1 lokal maupun Fase 2 cloud **dilarang dimulai** sebelum seluruh 6 gerbang berikut dipenuhi.
+> Dokumen ini hanya berisi **rencana usulan (`PROPOSALS ONLY`)** untuk dievaluasi oleh Owner. Walaupun paket dokumentasi Mode A telah ditutup dan ditandatangani Owner pada **14 November 2026**, persetujuan tersebut **tidak** berarti otorisasi Mode B, **tidak** menyetujui baseline teknis Mode B, dan **tidak** menyatakan aplikasi siap produksi. Tidak ada satu pun fase di bawah ini yang sedang diotorisasi atau siap dieksekusi sekarang. Sesuai **`NOD-01` (`LOCKED — IMPLEMENTATION BLOCKED`)**, pekerjaan Fase 1 lokal maupun Fase 2 cloud **dilarang dimulai** sebelum seluruh 6 gerbang berikut dipenuhi.
 
 ### 6 Gerbang Wajib Sebelum Mode B Dapat Diotorisasi
-1. **`TRD v2` disediakan & diverifikasi:** File spesifikasi arsitektur resmi `TRD v2` telah diunggah Owner ke workspace dan kontrak database, Edge Function, RPC, RLS, serta Cloudflare Workers Static Assets terdokumentasi tanpa asumsi.
-2. **Architecture crosswalk tuntas:** Seluruh pemetaan sumber (`01_SOURCE_OF_TRUTH_MATRIX.md`) terverifikasi terhadap `TRD v2` dan rekonsiliasi atas `DR-012`/`DR-013` disetujui.
-3. **Review final Mode A oleh Owner selesai:** Owner telah meninjau dan menandatangani (`Sign-Off`) paket akhir Mode A (`10_FINAL_MODE_A_RECONCILIATION_REPORT.md`).
-4. **Blocker teknis & cakupan implementasi terdokumentasi utuh:** Seluruh blocker (`SEC-01`, `SEC-02`, `SYNC-01/DI-04`, `BL-01`, `BL-02/NOD-05`, `BL-03`, `DI-01..03`, `QA-01`, `BL-04/NOD-06`) serta aturan `NOD-02`, `NOD-03`, `NOD-03B`, `NOD-04`, `NOD-05` tercatat final.
-5. **Proposal baseline & strategi branch (`NOD-06`) direview:** Owner meninjau klasifikasi forensik selektif commit `918d36560660cd183f603f6ea72238a96f031796` dan menetapkan titik awal branch/baseline Mode B tanpa merusak riwayat Git.
-6. **Owner memberi otorisasi eksplisit Mode B:** Persetujuan tertulis terpisah dari Owner untuk membuka fase implementasi Mode B.
+1. **`TRD v2` disediakan & diverifikasi** *(`BELUM TERPENUHI — MEMBLOKIR`)*: File spesifikasi arsitektur resmi `TRD v2` belum diunggah Owner ke workspace sehingga kontrak database, Edge Function, RPC, RLS, dan Cloudflare Workers Static Assets belum terdokumentasi/terverifikasi.
+2. **Architecture crosswalk tuntas** *(`BELUM TERPENUHI — MEMBLOKIR`)*: Pemetaan sumber (`01_SOURCE_OF_TRUTH_MATRIX.md`) belum dapat diverifikasi final terhadap `TRD v2` dan rekonsiliasi atas `DR-012`/`DR-013` belum disetujui.
+3. **Review final Mode A oleh Owner selesai** *(`TERPENUHI — 14 November 2026`)*: Owner menyetujui penutupan rekonsiliasi dokumentasi paket akhir Mode A (`MODE A: CLOSED — OWNER SIGNED OFF` pada `10_FINAL_MODE_A_RECONCILIATION_REPORT.md`). *(Catatan: tidak otomatis menyetujui baseline teknis Mode B maupun mengotorisasi Mode B).*
+4. **Blocker teknis & cakupan implementasi terdokumentasi utuh** *(`TERDOKUMENTASI DI AUDIT — EXIT CRITERIA BELUM DIEKSEKUSI`)*: Seluruh blocker (`SEC-01`, `SEC-02`, `SYNC-01/DI-04`, `BL-01`, `BL-02/NOD-05`, `BL-03`, `DI-01..03`, `QA-01`, `BL-04/NOD-06`) serta aturan `NOD-02`, `NOD-03`, `NOD-03B`, `NOD-04`, `NOD-05` telah tercatat final, namun seluruh perbaikannya belum dieksekusi (`MODE B NOT AUTHORIZED`).
+5. **Proposal baseline & strategi branch (`NOD-06`) disetujui** *(`BELUM DISETUJUI`)*: Owner belum memberikan persetujuan eksplisit atas baseline teknis Mode B terhadap klasifikasi forensik selektif commit `918d36560660cd183f603f6ea72238a96f031796`.
+6. **Owner memberi otorisasi eksplisit Mode B** *(`BELUM DIOTORISASI — NOT AUTHORIZED`)*: Belum ada persetujuan tertulis terpisah dari Owner untuk membuka fase implementasi Mode B.
 
 ---
 

@@ -1,19 +1,20 @@
 # 10 — FINAL MODE A RECONCILIATION & OWNER SIGN-OFF PACKAGE
 
-**Tanggal Rekonsiliasi:** 13 November 2026  
+**Tanggal Rekonsiliasi & Penutupan Mode A:** 14 November 2026 *(audit & rekonsiliasi awal 13 November 2026)*  
 **Repository:** `https://github.com/adizseptian/TOKO-SAKALA` (`branch: main`)  
 **Mode Kerja:** `MODE A — DOCUMENTATION RECONCILIATION ONLY` (`Implementation: STRICTLY PROHIBITED`)  
-**Status Paket Mode A:** **`READY FOR OWNER SIGN-OFF`**  
+**Status Paket Mode A:** **`CLOSED — OWNER SIGNED OFF`** *(14 November 2026)*  
 **Status Otorisasi Implementasi:** **`MODE B: NOT AUTHORIZED`**
 
 ---
 
 ## 1. Executive Outcome
 
-Paket dokumentasi audit Mode A (**11 dokumen** pada `docs/audit-mode-a/00..10` ditambah rekonsiliasi laporan ingesti awal `/docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md`) telah direkonsiliasikan secara menyeluruh agar 100% selaras dengan seluruh keputusan final Owner (**`DL-01..09`**, **`NOD-01..06`**, serta **`NOD-03B`**), temuan forensik **Deliverable 7**, dan kondisi faktual kode di workspace.
+Paket dokumentasi audit Mode A (**11 dokumen** pada `docs/audit-mode-a/00..10` ditambah rekonsiliasi laporan ingesti awal `/docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md`) telah direkonsiliasikan secara menyeluruh dan disetujui penutupannya oleh Owner pada **14 November 2026** agar 100% selaras dengan seluruh keputusan final Owner (**`DL-01..09`**, **`NOD-01..06`**, serta **`NOD-03B`**), temuan forensik **Deliverable 7**, dan kondisi faktual kode di workspace.
 
-- **Status Sign-Off:** **`READY FOR OWNER SIGN-OFF`**
-- **Status Implementasi Mode B:** **`MODE B: NOT AUTHORIZED`** *(Seluruh penulisan kode aplikasi, CSS, SQL, test, konfigurasi, maupun mutasi Git tetap terlarang hingga 6 gerbang otorisasi pada Bagian 10 dipenuhi dan disetujui eksplisit oleh Owner).*
+- **Status Sign-Off:** **`CLOSED — OWNER SIGNED OFF`** *(Disetujui Owner melalui instruksi eksplisit pada 14 November 2026)*.
+- **Batas Persetujuan:** Persetujuan penutupan Mode A **tidak** berarti persetujuan implementasi Mode B, **tidak** berarti persetujuan baseline teknis Mode B, dan **tidak** menyatakan bahwa aplikasi sudah siap produksi.
+- **Status Implementasi Mode B:** **`MODE B: NOT AUTHORIZED`** *(Seluruh penulisan kode aplikasi, CSS, SQL, test, konfigurasi, maupun mutasi riwayat Git tetap terlarang hingga gerbang otorisasi pada Bagian 10 dipenuhi dan disetujui eksplisit oleh Owner).*
 - **Kontrak Kejujuran Pembuktian:**
   - Tidak ada perbaikan kode atau test yang dijalankan dalam Deliverable 8 (`0` file di luar folder audit yang diubah).
   - Snapshot hasil `npm run scan:secrets` (PASS), `npx vitest run` (`18 files, 85 tests` PASS — dengan catatan golden tests masih mengunci rumus Laba & `Latest Unit Cost` yang menyimpang), dan `npx tsc --noEmit` (`0` errors) dicatat sebagai fakta historis dari pemeriksaan 13 Nov 2026, bukan klaim perbaikan baru.
@@ -26,7 +27,7 @@ Paket dokumentasi audit Mode A (**11 dokumen** pada `docs/audit-mode-a/00..10` d
 | Atribut Git | Nilai Referensi Terverifikasi | Sumber Bukti & Kejujuran Lingkungan |
 |---|---|---|
 | **Repository & Branch** | `adizseptian/TOKO-SAKALA` — branch `main` | Verifikasi metadata GitHub Owner & direktori deliverable Mode A. |
-| **Current Repository HEAD** | `2b1b352de4ebc6446fa5dc8ad469c357c657567a` (`2b1b352`) | HEAD aktual pada branch `main` sesuai verifikasi GitHub terkini (Final Correction — Deliverable 8). |
+| **Verified HEAD Immediately Before Closure Commit** | `Verified HEAD immediately before the Mode A closure documentation commit: 4700ea53a53d1c8711d7a99b0a9805456e2ec3d1` | Diverifikasi via `git ls-remote` & GitHub Commit API pada branch `main` sebelum penyusunan commit penutupan Mode A *(SHA commit penutupan yang baru tidak dituliskan ke dalam dokumen ini; klaim lama terhadap commit sebelumnya sebagai HEAD terkini telah dicabut)*. |
 | **Reference Audit Commit (Objek Audit Historis)** | `918d36560660cd183f603f6ea72238a96f031796` (`918d365`) | Commit historis dengan judul aktual **`"feat(engine): add discount support and sample data management"`**. Hasil GitHub Compare `9e64039...918d365` memuat **25 file berubah** (`12` dokumentasi audit, `12` file source/CSS/test/konfigurasi, `1` `.gitignore`). |
 | **Baseline Commit (Pembanding)** | `9e64039be553d0abecd56c07f7f9def57d596c1e` (`9e64039`) | Commit acuan pembanding sebelum `918d365` (Deliverable 7 Audit A). |
 | **Keterbatasan Lingkungan Kontainer (`/app/applet`)** | **`NO_DOT_GIT_IN_WORKSPACE`** *(direktori `.git` tidak tersedia di kontainer)* | Kontainer sandbox Google AI Studio hanya memuat salinan snapshot file proyek tanpa metadata `.git`. Akibatnya perintah lokal `git status`, `git log`, `git show`, dan `git diff` **tidak dapat dieksekusi langsung** di `/app/applet`, termasuk pembuatan commit SHA Git lokal baru. Keterbatasan ini dilaporkan apa adanya sesuai aturan kejujuran ketat Mode A; verifikasi perubahan file dilakukan memakai diff snapshot direktori & timestamp mtime filesystem (lihat Bagian 12). |
@@ -70,7 +71,7 @@ Seluruh dokumen otoritatif, audit, kode domain, dan test terkait yang diperiksa 
 7. `src/engine/contract.ts`, `src/engine/v1/calculate.ts`, `src/engine/v1/engineBridge.ts`, `src/engine/v1/purchase-preview.ts`, `src/engine/v1/stock-check-preview.ts`, `src/domain/event.ts`
 8. `src/App.tsx` (rute, modal, handler `handleDeleteRecord`, `handleUndoSave`, `getProductLatestUnitCost`, header/nav/CTA) & `src/styles.css` (token `:root` & `[data-theme="dark"]`, `--blue`, `--orange`, `.floating-dock`, `.laporan-group-slab`, `.tile-icon-box`, `.feed-icon`, `.menu-inset-icon`)
 9. `tests/engine/golden-rumus-pemilik.test.ts`, `tests/golden/sample-week.test.ts`
-10. Metadata GitHub terverifikasi pada branch `main` (Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a` serta GitHub Compare `9e64039...918d365`).
+10. Metadata GitHub terverifikasi pada branch `main` (`Verified HEAD immediately before the Mode A closure documentation commit: 4700ea53a53d1c8711d7a99b0a9805456e2ec3d1` serta GitHub Compare `9e64039...918d365`).
 11. Seluruh dokumen Mode A terdahulu: `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md` & `docs/audit-mode-a/00..09`.
 
 ---
@@ -91,7 +92,7 @@ Seluruh penyuntingan terbatas **100%** di dalam dokumen audit Mode A (**11 file 
 | 8 | `docs/audit-mode-a/07_ACCESSIBILITY_RESPONSIVE_QA.md` | Dimodifikasi | Diselaraskan Bagian 1 & 2 dengan `NOD-02` (oranye `#20211F`/`#FF5A1F`, `--blue` dark mode berbasis kategori SC `1.4.11` vs `1.4.3`, penghapusan klaim runtime palsu — seluruh uji browser tetap `NOT RUN`). |
 | 9 | `docs/audit-mode-a/08_DECISION_LOG.md` | Dimodifikasi | Ditetapkan final `DL-01..13`, dipindahkan `NOD-05` & `NOD-06` ke `LOCKED DECISIONS`, dicatat `CD-01` (`NOD-04: CONDITIONAL`) & `CD-02` (`NOD-03B: DEFERRED`), dibersihkan Bagian 4 (`NEEDS OWNER DECISION` hanya menyisakan `NOD-01` + sign-off gate), dan dimutakhirkan Blocker Register (`BL-02/NOD-05`, `BL-04/NOD-06`). |
 | 10 | `docs/audit-mode-a/09_MODE_B_IMPLEMENTATION_PLAN.md` | Dimodifikasi | Ditambahkan Bagian 1 wajib **`MODE B NOT AUTHORIZED`** (6 gerbang), dipisahkan tegas **Temuan Audit vs Prasyarat vs Proposal Kerja (`PROPOSALS ONLY`) vs Proposal Baseline (`NOD-06`)**, dihapus klaim Fase 1 boleh jalan sambil menunggu `TRD v2`, serta dimasukkan koreksi `Moving Average` (`NOD-05`). |
-| 11 | `docs/audit-mode-a/10_FINAL_MODE_A_RECONCILIATION_REPORT.md` | **Dibuat Baru & Dikoreksi** | Dokumen paket rekonsiliasi final & persiapan Owner Sign-Off ini (14 bagian lengkap, termasuk *Final Forensic Report Accuracy Correction* untuk HEAD `2b1b352` dan compare `9e64039...918d365`). |
+| 11 | `docs/audit-mode-a/10_FINAL_MODE_A_RECONCILIATION_REPORT.md` | **Dibuat Baru & Dimutakhirkan** | Dokumen paket rekonsiliasi final & catatan penutupan Mode A ini (14 bagian lengkap, termasuk koreksi metadata pra-penutupan `4700ea53`, compare `9e64039...918d365`, dan persetujuan Owner tanggal `14 November 2026`). |
 | 12 | `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md` | Dimodifikasi | Ditambahkan banner rekonsiliasi Deliverable 8, diperbaiki path `src/engine/v1/*-preview.ts`, dan diselaraskan status Deliverable 3, 4, & 6 dengan tetap mempertahankan seluruh bukti forensik aslinya. |
 
 ---
@@ -132,7 +133,7 @@ Seluruh penyuntingan terbatas **100%** di dalam dokumen audit Mode A (**11 file 
 4. **`NOD-03B` (`Early Close` — `DEFERRED — EXCLUDED FROM INITIAL RELEASE`):** Tidak ada lagi status `NEEDS OWNER DECISION` untuk *Early Close*; seluruh dokumen menegaskan alur penutupan periode normal sebagai cakupan awal tanpa UI, kontrol, pengaturan, ataupun notifikasi *Early Close*.
 5. **`NOD-04` (Notification Bell — `CONDITIONAL — FUNCTIONAL VALUE REQUIRED`):** Disajikan secara seragam sebagai status **bersyarat**: hanya dipertahankan bila didukung antrean sync lokal nyata, kegagalan sync terkonfirmasi, atau peringatan stok aktual + aksi relevan (zero angka/status palsu), dan dikeluarkan dari rilis awal jika tidak ada sumber fungsional nyata.
 6. **`NOD-05` (`Inventory Costing` — `LOCKED — MOVING AVERAGE`):** Rekonsiliasi menyeluruh mencatat **Moving Average** sebagai aturan resmi dan menetapkan implementasi `Latest Unit Cost` (`calculate.ts`, `contract.ts`, `engineBridge.ts`, `App.tsx:1056–1061`, `golden-rumus-pemilik.test.ts:14–66, 298–340`) serta bug peleburan `unknownUnits` (`calculate.ts:141–143`) sebagai **deviasi implementasi & test**. Enam aturan integritas data tercantum di `08_DECISION_LOG.md` (`DL-12`), `01_SOURCE_OF_TRUTH_MATRIX.md` (`C-14`), & `09_MODE_B_IMPLEMENTATION_PLAN.md` (§3 Proposal 1.1). Tidak ada file `src/*`, `tests/*`, `01_PRD.md`, maupun `DECISION_REGISTER.md` yang disentuh.
-7. **`NOD-06` (`Git History & Baseline` — `LOCKED — PRESERVE HISTORY`):** Dihapus seluruh usulan `git revert`/`reset`; ditetapkan klasifikasi forensik selektif atas **25 file berubah** pada GitHub Compare `9e64039...918d365` (`12` dokumentasi audit, `12` file source/CSS/test/konfigurasi, `1` `.gitignore`, tanpa video MP4) dengan Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a`, serta strategi baseline & branch Mode B pada Bagian 9 tanpa melakukan mutasi Git di Mode A.
+7. **`NOD-06` (`Git History & Baseline` — `LOCKED — PRESERVE HISTORY`):** Dihapus seluruh usulan `git revert`/`reset`; ditetapkan klasifikasi forensik selektif atas **25 file berubah** pada GitHub Compare `9e64039...918d365` (`12` dokumentasi audit, `12` file source/CSS/test/konfigurasi, `1` `.gitignore`, tanpa video MP4) dengan `Verified HEAD immediately before the Mode A closure documentation commit: 4700ea53a53d1c8711d7a99b0a9805456e2ec3d1`, serta strategi baseline & branch Mode B pada Bagian 9 tanpa melakukan mutasi Git di Mode A.
 
 ---
 
@@ -147,15 +148,15 @@ Ringkasan lengkap 10 blocker dari `08_DECISION_LOG.md` §5:
 - **`BL-02 / NOD-05` (Inventory Costing Critical):** Deviasi `Latest Unit Cost` & peleburan `unknownUnits` ke `knownUnits` (`calculate.ts:141–143`) di kode dan `golden-rumus-pemilik.test.ts`.
 - **`BL-03` (Reporting Critical):** Layar `Laporan` mengabaikan filter `Hari/Minggu/Bulan/Tahun` & anchor date (tetap merender `storeSummary`); `Beranda` belum pisah hari ini/periode/kumulatif.
 - **`DI-01..03` (Data Integrity High):** `parseRupiahInput("") -> 0` (`blank = 0`), `handleDeleteRecord` hard-delete tanpa `VOID` (`NOD-03`), `unit: 'pcs'` hardcoded, prefill dummy `showOtherIncomeModal`, & modul preview `src/engine/v1/*-preview.ts` terisolasi.
-- **`BL-04 / NOD-06` (Baseline Governance):** Commit campuran historis `918d36560660cd183f603f6ea72238a96f031796` (`"feat(engine): add discount support and sample data management"` — 25 file vs `9e64039`, Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a`) menuntut review baseline Mode B & `.git` tidak tersedia di kontainer sandbox.
+- **`BL-04 / NOD-06` (Baseline Governance):** Commit campuran historis `918d36560660cd183f603f6ea72238a96f031796` (`"feat(engine): add discount support and sample data management"` — 25 file vs `9e64039`; `Verified HEAD immediately before the Mode A closure documentation commit: 4700ea53a53d1c8711d7a99b0a9805456e2ec3d1`) menuntut review & persetujuan baseline teknis Mode B terpisah, serta `.git` tidak tersedia di kontainer sandbox.
 - **`QA-01` (Runtime QA Verification):** Uji Playwright Chromium `320–1440 px`, kontras render `NOD-02` (`#20211F`/`#FF5A1F` & `--blue` dark mode), keyboard `<div role="button">` (10 elemen), stepper `<44px` (`32×34px`), teks sub-12px (`229`), `axe-core`, zoom 200%, & reduced motion berstatus **`NOT RUN`**.
 
 ---
 
 ## 9. Git History & Baseline Findings (`NOD-06` — 6 Elemen Wajib)
 
-### 1. Commit Referensi, Objek Audit Historis & Current HEAD
-- **Current Repository HEAD (`main`):** `2b1b352de4ebc6446fa5dc8ad469c357c657567a` (`2b1b352`).
+### 1. Commit Referensi, Objek Audit Historis & HEAD Pra-Penutupan
+- **Verified HEAD immediately before the Mode A closure documentation commit (`main`):** `4700ea53a53d1c8711d7a99b0a9805456e2ec3d1` (`4700ea53`).
 - **Reference Audit Commit (Objek Audit Historis):** `918d36560660cd183f603f6ea72238a96f031796` (`918d365`).
 - **Baseline Commit (Pembanding):** `9e64039be553d0abecd56c07f7f9def57d596c1e` (`9e64039`).
 
@@ -187,13 +188,13 @@ Berdasarkan hasil perbandingan terverifikasi di GitHub (`9e64039...918d365`), co
 ### 4. Risiko yang Masih Tersisa (*Outstanding Risks*)
 1. **Golden Test Palsu-Hijau (*False Green*):** `npx vitest run` (`85 tests`) saat ini lulus bukan karena logika sesuai PRD, melainkan karena `golden-rumus-pemilik.test.ts` & `sample-week.test.ts` mengodekan ekspektasi `Latest Unit Cost` & formula P&L yang menyimpang (`BL-01`, `NOD-05`).
 2. **Riwayat Commit Campuran:** Commit `918d365` menyatukan `12` dokumen audit dengan `12` perubahan source/CSS/test/konfigurasi dan `1` `.gitignore` (`25` file total), sehingga menuntut inspeksi diff per-file saat transisi ke Mode B.
-3. **Absennya `.git` di Snapshot Kontainer (`/app/applet`):** Audit forensik baris-per-baris git diff antara `9e64039`, `918d365`, dan HEAD `2b1b352` tidak dapat dieksekusi langsung dari kontainer ini, sehingga metadata file & SHA bersandar pada hasil verifikasi GitHub Compare `9e64039...918d365` dan HEAD `2b1b352`.
+3. **Absennya `.git` di Snapshot Kontainer (`/app/applet`):** Audit forensik baris-per-baris git diff antara `9e64039`, `918d365`, dan HEAD pra-penutupan `4700ea53` tidak dapat dieksekusi langsung dari kontainer ini, sehingga metadata file & SHA bersandar pada hasil verifikasi GitHub Compare `9e64039...918d365` serta `git ls-remote` / GitHub API untuk `4700ea53`.
 
-### 5. Proposal Titik Awal & Strategi Branch Mode B *(Usulan — Belum Dieksekusi)*
-- **Kebijakan History:** **Pertahankan penuh seluruh riwayat commit pada `main` hingga Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a` termasuk commit historis `918d36560660cd183f603f6ea72238a96f031796`** (`0` reset, `0` rewrite/rebase history, `0` force-push, `0` revert otomatis).
-- **Titik Awal Mode B yang Diusulkan:**
-  1. Setelah paket rekonsiliasi Mode A final disinkronkan dan disetujui Owner di `main` (pasca-HEAD `2b1b352`), tandai titik akhir Mode A dengan **annotated tag referensi** (mis. `mode-a-signoff-v1`).
-  2. Ketika Owner menerbitkan `TRD v2` dan otorisasi tertulis Mode B, buat **branch kerja terisolasi baru** (mis. `mode-b/phase-1-trd-v2-and-core-fixes`) dari titik sign-off Mode A tersebut — tidak bekerja langsung di `main`.
+### 5. Proposal Titik Awal & Strategi Branch Mode B *(Usulan — Belum Dieksekusi & Belum Disetujui)*
+- **Kebijakan History:** **Pertahankan penuh seluruh riwayat commit pada `main` termasuk `4700ea53a53d1c8711d7a99b0a9805456e2ec3d1` serta commit historis `918d36560660cd183f603f6ea72238a96f031796`** (`0` reset, `0` rewrite/rebase history, `0` force-push, `0` revert otomatis).
+- **Titik Awal Mode B yang Diusulkan (Menunggu Review Baseline & Otorisasi Mode B):**
+  1. Setelah commit dokumentasi penutupan Mode A tersimpan dan terverifikasi di `main` (pasca-`4700ea53`), apabila Owner menyetujui penggunaan tag referensi pada saat pembukaan Mode B kelak, beri penanda titik akhir Mode A (mis. `mode-a-signoff-v1` — **belum dibuat di Mode A**).
+  2. Ketika Owner menerbitkan `TRD v2`, menyetujui baseline teknis Mode B, dan menerbitkan otorisasi tertulis Mode B, buat **branch kerja terisolasi baru** (mis. `mode-b/phase-1-trd-v2-and-core-fixes`) dari titik sign-off Mode A tersebut — tidak bekerja langsung di `main`.
   3. Di dalam branch Mode B baru tersebut, lakukan inspeksi `git diff 9e64039..918d365 -- <file>` dan `git diff 918d365..HEAD -- <file>` pada repositori Git penuh untuk memverifikasi tiap baris di kelompok B, C, & D, menerapkan perbaikan eksplisit (`NOD-05` Moving Average, P&L 9 langkah, `NOD-03` VOID, `DL-06` G4 dock, `TRD v2` RLS/RPC), serta memperbarui golden tests sebelum merge via Pull Request yang direview Owner.
 
 ### 6. Syarat Otorisasi Owner Terpisah
@@ -206,12 +207,12 @@ Berdasarkan hasil perbandingan terverifikasi di GitHub (`9e64039...918d365`), co
 Status implementasi saat ini: **`MODE B: NOT AUTHORIZED`**.
 
 Tidak ada pekerjaan Mode B (baik pengubahan `src/*` lokal maupun penyambungan cloud/SQL) yang boleh dimulai sebelum seluruh **6 Gerbang Wajib** berikut terpenuhi secara berurutan:
-1. **`TRD v2` Diserahkan & Diverifikasi:** Dokumen resmi `TRD v2` tersedia di repository (`NOD-01`).
-2. **Architecture Crosswalk Final:** Pemetaan 5-sumber di `01_SOURCE_OF_TRUTH_MATRIX.md` & konflik `DR-012`/`DR-013` diselaraskan terhadap `TRD v2`.
-3. **Owner Sign-Off Paket Mode A:** Owner menandatangani/menyetujui paket final Mode A (`docs/audit-mode-a/00..10` & `MODE_A_DOCUMENT_INGESTION_REPORT.md`).
-4. **Cakupan & Blocker Terkunci Final:** Owner mengonfirmasi batasan `NOD-02`, `NOD-03`, `NOD-03B` (*Early Close excluded*), `NOD-04` (*Notification Bell conditional*), `NOD-05` (*Moving Average*), & exit criteria `BL-01..04`, `SEC-01..02`, `SYNC-01`, `DI-01..03`, `QA-01`.
-5. **Review Strategi Baseline & Branch (`NOD-06`):** Owner menyetujui klasifikasi selektif `918d3656` dan titik awal branch Mode B (Bagian 9).
-6. **Otorisasi Tertulis Mode B:** Owner memberikan perintah eksplisit untuk membuka fase implementasi Mode B.
+1. **`TRD v2` Diserahkan & Diverifikasi** *(`BELUM TERPENUHI`)*: Dokumen resmi `TRD v2` belum tersedia di repository (`NOD-01`).
+2. **Architecture Crosswalk Final** *(`BELUM TERPENUHI`)*: Pemetaan 5-sumber di `01_SOURCE_OF_TRUTH_MATRIX.md` & konflik `DR-012`/`DR-013` belum diselaraskan final terhadap `TRD v2`.
+3. **Owner Sign-Off Paket Mode A** *(`TERPENUHI — 14 November 2026`)*: Owner telah menyetujui penutupan paket final rekonsiliasi dokumentasi Mode A (`MODE A: CLOSED — OWNER SIGNED OFF`).
+4. **Cakupan & Blocker Terkunci Final** *(`TERDOKUMENTASI — EXIT CRITERIA BELUM DIEKSEKUSI`)*: Batasan `NOD-02`, `NOD-03`, `NOD-03B` (*Early Close excluded*), `NOD-04` (*Notification Bell conditional*), `NOD-05` (*Moving Average*), & exit criteria `BL-01..04`, `SEC-01..02`, `SYNC-01`, `DI-01..03`, `QA-01` tercatat final, namun perbaikan teknisnya belum dijalankan.
+5. **Review & Persetujuan Baseline Teknis Mode B (`NOD-06`)** *(`BELUM DISETUJUI`)*: Owner belum memberikan persetujuan terpisah untuk baseline teknis Mode B maupun strategi branch (Bagian 9).
+6. **Otorisasi Tertulis Mode B** *(`NOT AUTHORIZED`)*: Owner belum memberikan perintah eksplisit untuk membuka fase implementasi Mode B.
 
 ---
 
@@ -233,6 +234,14 @@ Seluruh perubahan file pada tugas Deliverable 8 hanya berada pada jalur dokument
 
 **Nol file** yang berubah di `src/**`, `tests/**`, `supabase/**`, `migrations/**`, `src/styles.css`, `package.json`, `vite.config.ts`, `DESIGN.md`, `docs/DECISION_REGISTER.md`, `docs/specs/**`, `docs/redesign/**`, maupun riwayat Git.
 
+### Lingkup Perubahan Fase Penutupan Final Mode A (14 November 2026)
+Hanya **5 file dokumentasi audit** berikut yang diperbarui pada fase koreksi metadata HEAD & pencatatan Owner Sign-Off Mode A (dokumen `02..07` dan `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md` tidak diubah):
+1. `docs/audit-mode-a/00_AUDIT_EXECUTIVE_SUMMARY.md`
+2. `docs/audit-mode-a/01_SOURCE_OF_TRUTH_MATRIX.md`
+3. `docs/audit-mode-a/08_DECISION_LOG.md`
+4. `docs/audit-mode-a/09_MODE_B_IMPLEMENTATION_PLAN.md`
+5. `docs/audit-mode-a/10_FINAL_MODE_A_RECONCILIATION_REPORT.md`
+
 ---
 
 ## 12. Diff & Verification Evidence
@@ -246,7 +255,7 @@ Seluruh perubahan file pada tugas Deliverable 8 hanya berada pada jalur dokument
   - Tidak ada lagi usulan token `#B8370B` maupun penggantian global `--blue` (`#7CA0FF` / `#254EDB`) — kecuali catatan eksplisit bahwa usulan `#B8370B` telah dicabut.
   - Tidak ada lagi path keliru `src/domain/stock-check-preview.ts` maupun `src/domain/purchase-preview.ts`.
   - Tidak ada lagi status `NEEDS OWNER DECISION` yang tertinggal pada `NOD-03B`, `NOD-05`, maupun `NOD-06`, dan tidak ada lagi pernyataan bahwa Fase 1 lokal boleh dimulai sebelum `TRD v2` & otorisasi Mode B.
-  - Metadata Git pada seluruh dokumen audit konsisten memakai Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a` (`2b1b352`), objek audit historis `918d36560660cd183f603f6ea72238a96f031796` (`"feat(engine): add discount support and sample data management"`), baseline `9e64039be553d0abecd56c07f7f9def57d596c1e`, dan **25 file berubah** pada GitHub Compare `9e64039...918d365` tanpa klaim video MP4.
+  - Metadata Git pada seluruh dokumen audit konsisten memakai `Verified HEAD immediately before the Mode A closure documentation commit: 4700ea53a53d1c8711d7a99b0a9805456e2ec3d1`, objek audit historis `918d36560660cd183f603f6ea72238a96f031796` (`"feat(engine): add discount support and sample data management"`), baseline `9e64039be553d0abecd56c07f7f9def57d596c1e`, dan **25 file berubah** pada GitHub Compare `9e64039...918d365` tanpa klaim video MP4.
 
 ---
 
@@ -255,19 +264,20 @@ Seluruh perubahan file pada tugas Deliverable 8 hanya berada pada jalur dokument
 1. **`TRD v2` Absen dari Workspace (`NOD-01`):** Kontrak arsitektur Cloudflare Workers Static Assets, Supabase Edge Functions, RPC, dan tabel target resmi masih belum dapat diverifikasi dari berkas lokal (`NOT VERIFIED`).
 2. **Browser Runtime QA & Pengukuran Kontras Aktual (`QA-01`, `NOD-02`):** Biner Chromium tidak terpasang di kontainer sandbox sehingga pengukuran DOM pada 7 breakpoint (`320–1440 px`), rasio aktual `#20211F` on `#FF5A1F`, audit computed color `--blue` dark mode (`3.0:1` vs `4.5:1`), fokus trap modal, keyboard nav, zoom 200%, reduced motion, dan tangkapan layar tetap berstatus **`NOT RUN`**.
 3. **Line-by-Line Audit Modal `App.tsx:5751–6950`:** Pemetaan handler, state, dan ketidaksesuaian utama seluruh 19 modal/sheet sudah lengkap pada `02_SCREEN_INVENTORY.md` §3, tetapi inspeksi baris per baris atas area pengaya Pengaturan/SQL inline masih tercatat sebagai temuan awal yang akan dituntaskan saat refactor `ModalForm` di Mode B.
-4. **Live Cloud & Git Metadata Lokal:** Pengujian live RLS Supabase terhadap instance cloud (`dvznpniodskujfbdznnv.supabase.co`) tidak dilakukan dalam Mode A; verifikasi diff Git penuh atas `9e64039..918d365` dan `918d365..2b1b352` perlu dijalankan pada lingkungan yang memiliki repositori `.git` utuh saat review baseline oleh Owner.
+4. **Live Cloud & Git Metadata Lokal:** Pengujian live RLS Supabase terhadap instance cloud (`dvznpniodskujfbdznnv.supabase.co`) tidak dilakukan dalam Mode A; verifikasi diff Git penuh atas `9e64039..918d365` dan `918d365..4700ea53` (serta commit penutupan berikutnya) perlu dijalankan pada lingkungan yang memiliki repositori `.git` utuh saat review baseline oleh Owner.
 
 ---
 
-## 14. Final Sign-Off Recommendation
+## 14. Final Sign-Off & Closure Record
 
-Berdasarkan konsistensi penuh seluruh 12 dokumen audit terhadap keputusan Owner (`DL-01..09`, `NOD-01..06`, `NOD-03B`), terpeliharanya 100% kejujuran pembuktian tanpa modifikasi kode ataupun riwayat Git, serta tersedianya klasifikasi forensik akurat atas commit `918d365` (25 file pada GitHub Compare `9e64039...918d365`) dan HEAD `2b1b352`:
+Berdasarkan konsistensi penuh paket dokumentasi audit Mode A terhadap keputusan Owner (`DL-01..09`, `NOD-01..06`, `NOD-03B`), terpeliharanya 100% kejujuran pembuktian tanpa modifikasi kode ataupun riwayat Git, koreksi metadata `Verified HEAD immediately before the Mode A closure documentation commit: 4700ea53a53d1c8711d7a99b0a9805456e2ec3d1`, serta instruksi persetujuan eksplisit Owner pada **14 November 2026**:
 
-- **Outcome Paket Mode A:** **`READY FOR OWNER SIGN-OFF`**
+- **Outcome Paket Mode A:** **`CLOSED — OWNER SIGNED OFF`** *(Tanggal Persetujuan Owner: **14 November 2026**)*
 - **Status Implementasi Mode B:** **`MODE B: NOT AUTHORIZED`**
+- **Batasan Tegas:** Penutupan dokumentasi Mode A ini **tidak** berarti otorisasi implementasi Mode B, **tidak** menyetujui baseline teknis Mode B, dan **tidak** menyatakan aplikasi siap produksi; pengujian browser (`QA-01`), uji keamanan cloud Supabase (`SEC-01`, `SEC-02`), dan verifikasi `TRD v2` (`NOD-01`) belum dilakukan.
 
-### Lembar Persetujuan Owner *(Diisi Terpisah oleh Owner)*
-- [ ] **Owner Menyetujui & Menandatangani Paket Final Audit Mode A (`00..10` + Ingestion Report).**
-- [ ] **Owner Meninjau Klasifikasi Selektif `918d3656` & Proposal Baseline Branch Mode B (`NOD-06`).**
-- [ ] **Owner Mengunggah / Mengonfirmasi Dokumen `TRD v2` (`NOD-01`).**
-- [ ] **Otorisasi Terpisah Diberikan untuk Memulai Mode B:** *(Belum Disetujui — Tunggu Instruksi Eksplisit Owner).*
+### Lembar Persetujuan Owner *(Diperbarui 14 November 2026)*
+- [x] **Owner Menyetujui & Menandatangani Penutupan Paket Final Audit Mode A (`14 November 2026`).**
+- [ ] **Owner Menyetujui Baseline Teknis & Strategi Branch Mode B (`NOD-06`):** *(Belum Disetujui — Memerlukan Keputusan Eksplisit Terpisah).*
+- [ ] **Owner Mengunggah / Mengonfirmasi Dokumen `TRD v2` (`NOD-01`):** *(Belum Tersedia di Workspace).*
+- [ ] **Otorisasi Terpisah Diberikan untuk Memulai Mode B:** *(Belum Disetujui — `MODE B: NOT AUTHORIZED`).*
