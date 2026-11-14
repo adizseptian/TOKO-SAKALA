@@ -32,7 +32,7 @@
    │
    ├─► (Offline / Belum Konfigurasi Cloud) ─► Banner/Toast: "Tersimpan di perangkat (lokal vN)"
    │
-   └─► (Online & Cloud Terkonfigurasi) ───► Kirim ke Edge Function/RPC (TRD v2)
+   └─► (Target Arsitektur Saat TRD v2 Disahkan) ─► Kirim ke Edge Function/RPC [NOD-01: IMPLEMENTATION BLOCKED — TRD v2 absen di workspace]
          ├─(ACK server cocok dgn vN) ──────► Status: "Tersimpan & Terkonfirmasi Server (vN)"
          └─(Gagal / Konflik versi / Timeout) ► Tetap aman di Outbox: "Tersimpan lokal · N tertunda" + tombol "Sinkronkan Sekarang"
 ```
@@ -57,28 +57,30 @@ Memperbaiki bug kritis `pendingCount: 0` di `src/storage/syncEngine.ts:84`:
 | Error server / Auth kedaluwarsa (`lastError !== null`) | `>= 0` | `< localVersion` | **`Gagal sinkron · Data tetap aman di HP`** *(+ pesan ringkas & tombol Coba Lagi)* | `--red` + `--red-pale` + Ikon `AlertTriangle` |
 | Konfigurasi aktif, outbox `0`, & server mengonfirmasi `serverVersion === localVersion` | `0` | `=== localVersion` | **`Terkonfirmasi server (v{N})`** | `--green` + `--green-pale` + Ikon `CheckCircle2` |
 
-> **Aturan Mutlak (Owner #4):** Label `"Terkonfirmasi server"` / `"Tersinkron"` **HARAM muncul** bila `pendingCount > 0` atau `serverConfirmedVersion !== localVersion`.
+> **Aturan Mutlak (`DL-04` & `NOD-04`):** Label `"Terkonfirmasi server"` / `"Tersinkron"` **DILARANG** muncul bila `pendingCount > 0` atau `serverConfirmedVersion !== localVersion`. Status header Notification Bell bersifat **`CONDITIONAL`**: hanya boleh dipertahankan jika didasari antrean sinkronisasi lokal nyata, kegagalan sinkronisasi terkonfirmasi, atau peringatan stok berbasis data aktual dengan tindakan bermakna; jika tidak terbukti fungsional, keluarkan dari rilis awal.
 
 ---
 
-## 4. State Machine 3 — Strict Append-Only (`VOID` & Tutup Periode)
+## 4. State Machine 3 — Strict Append-Only (`NOD-03: LOCKED` & `NOD-03B: DEFERRED`)
 
 Menggantikan `handleDeleteRecord` (`App.tsx:703–721`) dan `handleUndoSave` (`1164–1175`):
 
 ```
-[EVENT AKTIF (Periode Terbuka)]
-   ├── Aksi: "Batalkan Catatan (Void)" + Alasan wajib/pilihan
+[EVENT FINANSIAL CANCELLABLE AKTIF (Periode Normal Terbuka)]
+   ├── Aksi: "Batalkan Catatan (Void)" + Alasan wajib + Referensi Event Asal
    │     └──► Mencatat Event baru: { kind: 'VOID', voidsEventId: event.id, reason, occurredAt }
-   │          (Event asli tetap tersimpan di histori dengan badge "Dibatalkan"; efek ke stok/kas/laba dibalikkan oleh engine)
+   │          (Event asli tidak dihapus & tetap tersimpan; master data, konfigurasi, snapshot, dan event sistem
+   │           TIDAK otomatis dapat di-VOID)
    │
-   └── Tutup Periode (`period_close` -> snapshot immutable)
-         └──► Event masuk ke [PERIODE TERTUTUP (BEKU)]
+   └── Tutup Periode Normal (`period_close` -> snapshot immutable; Early Close DEFERRED/EXCLUDED per NOD-03B)
+         └──► Event masuk ke [PERIODE TERTUTUP (BEKU / IMMUTABLE)]
                ├── Tombol "Batalkan / Edit" DIKUNCI (Ikon Gembok + pesan: "Periode sudah ditutup")
                └── Aksi yang diizinkan: "Buat Catatan Koreksi"
                      └──► Mencatat Event baru pada periode aktif saat ini: { kind: 'CORRECTION', correctionOfCloseId, supersedesEventId, delta, reason }
 ```
 
-- **Semantik Undo (`saveResultModal`):** Menekan `Urungkan` segera setelah simpan **tidak menimpa balik snapshot lama** (`previousPayload`), melainkan memanggil mekanisme `VOID` atas `eventId` / `commandId` yang baru saja dibuat, sehingga seluruh riwayat aksi tetap auditable (Owner #5).
+- **Semantik Undo (`saveResultModal`):** Menekan `Urungkan` segera setelah simpan **tidak menimpa balik snapshot lama** (`previousPayload`), melainkan memanggil mekanisme `VOID` atas `eventId` / `commandId` transaksi finansial yang baru dibuat dengan alasan + referensi event asal (`NOD-03`).
+- **Larangan *Early Close* (`NOD-03B — DEFERRED — EXCLUDED FROM INITIAL RELEASE`):** Tidak ada state transition, kontrol, pengaturan, notifikasi, ataupun mekanisme perpindahan periode otomatis untuk *Early Close* pada cakupan rilis awal; hanya alur penutupan periode normal yang digunakan.
 
 ---
 

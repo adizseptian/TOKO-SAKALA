@@ -19,37 +19,36 @@ Rumus luminansi relatif WCAG 2.1/2.2 terhadap pasangan token di `src/styles.css:
 | `--muted` (`#686A65`) / `--paper` (`#FFFDF6`) | **`5.38:1`** | PASS | PASS | Aman dipertahankan |
 | `--muted` (`#686A65`) / `--canvas` (`#F4F0E7`) | **`4.81:1`** | PASS | PASS | Aman dipertahankan |
 | `--ink` (`#20211F`) / `--lime` (`#D7FA4A`) | **`13.60:1`** | PASS | PASS | Sangat aman untuk active bottom tab |
-| `--blue` (`#2958E8`) / `--blue-pale` (`#E8EDFF`) | **`4.92:1`** | PASS | PASS | Aman |
+| `--blue` (`#2958E8`) / `--blue-pale` (`#E8EDFF`) | **`4.92:1`** | PASS | PASS | Aman (matematis; verifikasi render `NOT RUN`) |
 | `--green` (`#177245`) / `--green-pale` (`#E4F5E9`) | **`5.25:1`** | PASS | PASS | Aman |
 | `--amber` (`#98500D`) / `--amber-pale` (`#FFF0DA`) | **`5.37:1`** | PASS | PASS | Aman |
 | `--red` (`#B52821`) / `--red-pale` (`#FFE7E3`) | **`5.41:1`** | PASS | PASS | Aman |
-| **`#FFFFFF` / `--orange` (`#FF5A1F`)** | **`3.12:1`** | **FAIL** | PASS (`>=3.0`) | **BUG A11Y-03:** Dipakai pada tombol & label normal (`<18.67px bold`), mis. `Simpan semua` `13px` (`App.tsx:8165–8168`). **Solusi:** Butuh keputusan Owner (`NOD-02`) antara teks `#20211F` (`5.19:1`) atau fill `#B8370B` (`5.85:1`). |
-| `--ink` (`#20211F`) / `--orange` (`#FF5A1F`) | **`5.19:1`** | **PASS** | PASS | Alternatif kontras AA terbaik sambil mempertahankan `#FF5A1F` persis! |
-| `#FFFFFF` / `--orange-dark` (`#D93C08`) | **`4.57:1`** | **PASS** | PASS | Masih memenuhi AA tipis (`4.57:1`); `#B8370B` memberi margin lebih aman (`5.85:1`). |
+| **`#FFFFFF` / `--orange` (`#FF5A1F`)** | **`3.12:1`** | **FAIL** | PASS (`>=3.0`) | **BUG A11Y-03 (Aktual di source):** Dipakai pada tombol & label normal (`<18.67px bold`), mis. `Simpan semua` `13px` (`App.tsx:8165–8168`). **Keputusan `NOD-02`:** Pertahankan `#FF5A1F` & ubah teks menjadi `#20211F` (`--ink`) di tempat verifikasi aktual mengonfirmasi `>=4.5:1`. |
+| `--ink` (`#20211F`) / `--orange` (`#FF5A1F`) | **`5.19:1`** *(matematis)* | **PASS (teoretis)** | PASS | **KEPUTUSAN `NOD-02` (`LOCKED WITH USAGE-BASED VERIFICATION`):** Foreground `--ink` (`#20211F`) di atas `--orange` (`#FF5A1F`) dipilih selama uji render aktual mengonfirmasi `>=4.5:1` (browser check **`NOT RUN`**). |
 
-### B. Mode Gelap (`[data-theme="dark"]`)
+### B. Mode Gelap (`[data-theme="dark"]`) & Protokol Inventarisasi `--blue` (`NOD-02`)
 
-| Pasangan Warna (Foreground / Background) | Rasio Terukur | Syarat AA Normal (`4.5:1`) | Status & Tindakan |
+| Pasangan Warna (Foreground / Background) | Rasio Matematis Statis | Ambang WCAG Relevan | Status & Tindakan Terkunci (`NOD-02`) |
 |---|---|---|---|
-| `--ink` (`#FFFDF6`) / `--paper` (`#1C1D1B`) | **`16.63:1`** | PASS | Aman |
-| `--muted` (`#9FA29C`) / `--paper` (`#1C1D1B`) | **`6.55:1`** | PASS | Aman |
-| **`#FFFFFF` / `--orange` (`#FF6B34`)** | **`2.84:1`** | **FAIL (Kritis)** | Gagal baik teks normal maupun besar (`<3.0:1`)! Wajib pakai `#20211F` (`5.70:1`) atau `#B8370B` untuk latar tombol putih. |
-| `--ink` (`#20211F`) / `--orange` (`#FF6B34`) | **`5.70:1`** | PASS | Aman jika teks tombol oranye memakai gelap `#20211F`. |
-| **`--blue` (`#4872F0`) / `--blue-pale` (`#1C2642`)** | **`3.52:1`** | **FAIL** | Wajib naikkan kecerahan `--blue` di dark mode (mis. `#7CA0FF` -> `6.8:1` on `#1C2642`) untuk teks link/info di dark mode. |
-| **`#FFFFFF` / `--blue` (`#4872F0`)** | **`4.25:1`** | **FAIL** | Tombol sekunder biru di dark mode gagal AA normal (`<4.5:1`); perlu `--blue-btn-bg: #254EDB` (`6.37:1` untuk teks putih). |
-| `--green` (`#4ADE80`) / `--green-pale` (`#15321F`) | **`9.15:1`** | PASS | Aman |
-| `--amber` (`#FBB724`) / `--amber-pale` (`#362912`) | **`8.59:1`** | PASS | Aman |
-| `--red` (`#F87171`) / `--red-pale` (`#3B1717`) | **`5.55:1`** | PASS | Aman |
+| `--ink` (`#FFFDF6`) / `--paper` (`#1C1D1B`) | **`16.63:1`** | `>=4.5:1` (teks) | PASS (matematis) |
+| `--muted` (`#9FA29C`) / `--paper` (`#1C1D1B`) | **`6.55:1`** | `>=4.5:1` (teks) | PASS (matematis) |
+| **`#FFFFFF` / `--orange` (`#FF6B34`)** | **`2.84:1`** | `>=4.5:1` (teks) | **FAIL (Kritis)** — gunakan foreground `#20211F` per `NOD-02` dengan verifikasi aktual. |
+| `--ink` (`#20211F`) / `--orange` (`#FF6B34`) | **`5.70:1`** *(matematis)* | `>=4.5:1` (teks) | Terkunci bersyarat verifikasi render aktual (`NOT RUN`). |
+| **`--blue` (`#4872F0`) — Focus Ring & Ikon/Border UI** (`styles.css:84, 384, 470, 1967`; `App.tsx:5680, 5801, 5844, 6723, 6892, 7690`) | `3.52:1` s.d. `4.64:1` *(tergantung BG aktual)* | **`>=3.0:1`** (SC 1.4.11 UI/ikon) | **Dilarang mengganti token secara global tanpa bukti!** Secara matematis memenuhi ambang non-text `3.0:1`; wajib diverifikasi computed style-nya saat browser QA. |
+| **`--blue` (`#4872F0`) — Teks Normal** (`styles.css:420, 2216`; `App.tsx:2528, 2757, 3729, 6430, 6761`) | `3.52:1` (`#1C2642`), `4.29:1` (`#1C1D1B`), `4.64:1` (`#121311`), atau on `#ffffff`/`#e8f0fe` hardcoded | **`>=4.5:1`** (SC 1.4.3 teks) | Sebagian titik teks berisiko di bawah `4.5:1` bila dirender di atas `#1C1D1B` atau `#1C2642`; namun `.laporan-group-slab` & `statusBg` saat ini punya background hardcoded terang. Wajib inspeksi render aktual per komponen (**`NOT RUN`**) sebelum mengajukan penyesuaian token teks. |
+| `--green` (`#4ADE80`) / `--green-pale` (`#15321F`) | **`9.15:1`** | `>=4.5:1` (teks) | PASS (matematis) |
+| `--amber` (`#FBB724`) / `--amber-pale` (`#362912`) | **`8.59:1`** | `>=4.5:1` (teks) | PASS (matematis) |
+| `--red` (`#F87171`) / `--red-pale` (`#3B1717`) | **`5.55:1`** | `>=4.5:1` (teks) | PASS (matematis) |
 
 ---
 
 ## 2. Register Cacat Aksesibilitas Terverifikasi Statis (`src/App.tsx` & `src/styles.css`)
 
-| ID | Kriteria WCAG 2.2 | Temuan Spesifik & Lokasi | Dampak Pengguna | Perbaikan Wajib di Mode B |
+| ID | Kriteria WCAG 2.2 | Temuan Spesifik & Lokasi | Dampak Pengguna | Perbaikan Usulan di Mode B *(Belum Diotorisasi)* |
 |---|---|---|---|---|
 | **A11Y-01** | `SC 2.1.1 Keyboard`, `4.1.2 Name Role Value` | **10 elemen** memakai `<div role="button" tabIndex={0} onClick={...}>` **tanpa `onKeyDown`** (`Enter`/`Space` tidak bekerja): `App.tsx:2190, 2350, 2731, 2803, 2958, 4331, 4379, 5033, 8002, 8140`. | Pengguna keyboard/switch/TalkBack tidak dapat membuka hero banner, timeline, kartu produk, rincian laporan, baris riwayat, atau sheet keranjang. | Konversi seluruh 10 elemen menjadi `<button type="button">` native (atau pisahkan kartu statis dengan tombol eksplisit di dalamnya). |
 | **A11Y-02** | `SC 1.4.4 Resize Text` & G4 Floor | **229 deklarasi ukuran font `< 12px`** (`173` inline `style` + `56` rule di `styles.css`), bahkan serendah `8px–9px` pada label status/metadata (`App.tsx:1970, 3769, 3884, 7404`). | Teks tidak terbaca oleh pemilik toko di ruang redup/cerah maupun saat zoom teks OS Android diperbesar. | Naikkan semua label penting & copy ke minimal **`12px`**; metadata non-kritis maksimal turun ke `11px` setelah verifikasi render. |
-| **A11Y-03** | `SC 1.4.3 Contrast (Minimum)` | Teks putih `#FFFFFF` di atas `#FF5A1F` (`3.12:1`) & `#FF6B34` (`2.84:1`), serta dark mode `#4872F0` (`3.52:1` / `4.25:1`). | Kontras tombol primer dan info box di luar ruang/mode gelap tidak terbaca jelas. | Terapkan hasil `NOD-02` + token dark mode `--blue` yang lulus `>= 4.5:1`. |
+| **A11Y-03** | `SC 1.4.3 Contrast`, `1.4.11 Non-text` (`NOD-02`) | Teks putih `#FFFFFF` di atas `#FF5A1F` (`3.12:1`) & `#FF6B34` (`2.84:1`), serta pemakaian teks `--blue` dark mode (`#4872F0`) pada permukaan gelap yang belum terukur di browser (`NOT RUN`). | Kontras tombol primer oranye & teks info biru di dark mode berisiko tidak terbaca jelas. | Terapkan `NOD-02`: pertahankan `#FF5A1F` + foreground `#20211F` terverifikasi `>=4.5:1`; lakukan audit render & computed style per komponen untuk `--blue` dark mode sebelum mengubah token apa pun. |
 | **A11Y-04** | `SC 2.4.3 Focus Order`, `1.3.1`, Dialog Pattern | `ModalForm.tsx` diimpor (`App.tsx:11`) tetapi **0/18 modal** memakainya. Modal inline tidak punya focus trap (Tab keluar ke layar belakang), beberapa tidak punya handler `Escape`, dan tidak mengembalikan fokus ke tombol pemicu saat tutup (terutama stacked modal `detailModal` -> `showItemsBreakdownModal`). | Pengguna screen reader / keyboard tersesat di belakang overlay backdrop. | Refactor semua 18 modal/sheet menggunakan komponen `ModalForm` yang dilengkapi focus trap penuh + Escape + restore focus. |
 | **A11Y-05** | `SC 2.5.8 Target Size`, Apple HIG `44×44` | Stepper pecahan uang di Setoran berukuran `32×34 px` (`App.tsx:3955, 3972`); tombol tanggal Laporan `minHeight: 32px` (`4299`), segmented tab Laporan `minHeight: 34px` (`4317`), tombol Timeline `minHeight: 40px` (`8107`), `Simpan semua` cart `height: 40px` (`8163`). | Risiko salah pencet tinggi saat mengoperasikan HP dengan satu tangan di meja kasir. | Wajib naikkan semua kontrol interaktif menjadi minimal **`44×44 CSS px`** (preferred `48×48` untuk stepper berulang). |
 | **A11Y-06** | `SC 2.3.3` / `prefers-reduced-motion` | `.live-pulse-beacon` & glow masih didefinisikan di `App.tsx:1975` & `styles.css`. | Melanggar G4 dan mengganggu sensitivitas gerak. | Hapus seluruh beacon pulse dekoratif; pastikan `@media (prefers-reduced-motion: reduce)` mencakup seluruh komponen sheet & toast. |
