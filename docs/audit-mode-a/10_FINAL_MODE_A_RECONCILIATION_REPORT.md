@@ -25,10 +25,11 @@ Paket dokumentasi audit Mode A (**11 dokumen** pada `docs/audit-mode-a/00..10` d
 
 | Atribut Git | Nilai Referensi Terverifikasi | Sumber Bukti & Kejujuran Lingkungan |
 |---|---|---|
-| **Repository & Branch** | `adizseptian/TOKO-SAKALA` — branch `main` | Arahan Owner Deliverable 7 & Deliverable 8; terkonfirmasi di panel *GitHub sync* (`public/assets/aistudio/Screenshot_20261113_224524_Chrome_f0ed3083.jpg`). |
-| **Reference Commit (Pembanding)** | `9e64039be553d0abecd56c07f7f9def57d596c1e` | Commit acuan sebelum `918d3656` (Deliverable 7 Audit A). |
-| **Known HEAD (Objek Audit)** | `918d36560660cd183f603f6ea72238a96f031796` | Commit pesan `chore: add UI/UX audit documentation` berisi **27 changed files** sesuai daftar panel *GitHub sync* Owner & Deliverable 7. |
-| **Keterbatasan Lingkungan Kontainer (`/app/applet`)** | **`NO_DOT_GIT_IN_WORKSPACE`** *(direktori `.git` tidak tersedia di kontainer)* | Kontainer sandbox Google AI Studio hanya memuat salinan snapshot file proyek tanpa metadata `.git`. Akibatnya perintah lokal `git status`, `git log`, `git show`, dan `git diff` **tidak dapat dieksekusi langsung** di `/app/applet`. Keterbatasan ini dilaporkan apa adanya sesuai aturan kejujuran ketat Mode A; verifikasi perubahan Deliverable 8 dilakukan memakai diff snapshot direktori & timestamp mtime filesystem (lihat Bagian 12). |
+| **Repository & Branch** | `adizseptian/TOKO-SAKALA` — branch `main` | Verifikasi metadata GitHub Owner & direktori deliverable Mode A. |
+| **Current Repository HEAD** | `2b1b352de4ebc6446fa5dc8ad469c357c657567a` (`2b1b352`) | HEAD aktual pada branch `main` sesuai verifikasi GitHub terkini (Final Correction — Deliverable 8). |
+| **Reference Audit Commit (Objek Audit Historis)** | `918d36560660cd183f603f6ea72238a96f031796` (`918d365`) | Commit historis dengan judul aktual **`"feat(engine): add discount support and sample data management"`**. Hasil GitHub Compare `9e64039...918d365` memuat **25 file berubah** (`12` dokumentasi audit, `12` file source/CSS/test/konfigurasi, `1` `.gitignore`). |
+| **Baseline Commit (Pembanding)** | `9e64039be553d0abecd56c07f7f9def57d596c1e` (`9e64039`) | Commit acuan pembanding sebelum `918d365` (Deliverable 7 Audit A). |
+| **Keterbatasan Lingkungan Kontainer (`/app/applet`)** | **`NO_DOT_GIT_IN_WORKSPACE`** *(direktori `.git` tidak tersedia di kontainer)* | Kontainer sandbox Google AI Studio hanya memuat salinan snapshot file proyek tanpa metadata `.git`. Akibatnya perintah lokal `git status`, `git log`, `git show`, dan `git diff` **tidak dapat dieksekusi langsung** di `/app/applet`, termasuk pembuatan commit SHA Git lokal baru. Keterbatasan ini dilaporkan apa adanya sesuai aturan kejujuran ketat Mode A; verifikasi perubahan file dilakukan memakai diff snapshot direktori & timestamp mtime filesystem (lihat Bagian 12). |
 
 ---
 
@@ -69,7 +70,7 @@ Seluruh dokumen otoritatif, audit, kode domain, dan test terkait yang diperiksa 
 7. `src/engine/contract.ts`, `src/engine/v1/calculate.ts`, `src/engine/v1/engineBridge.ts`, `src/engine/v1/purchase-preview.ts`, `src/engine/v1/stock-check-preview.ts`, `src/domain/event.ts`
 8. `src/App.tsx` (rute, modal, handler `handleDeleteRecord`, `handleUndoSave`, `getProductLatestUnitCost`, header/nav/CTA) & `src/styles.css` (token `:root` & `[data-theme="dark"]`, `--blue`, `--orange`, `.floating-dock`, `.laporan-group-slab`, `.tile-icon-box`, `.feed-icon`, `.menu-inset-icon`)
 9. `tests/engine/golden-rumus-pemilik.test.ts`, `tests/golden/sample-week.test.ts`
-10. Bukti snapshot panel *GitHub sync*: `public/assets/aistudio/Screenshot_20261113_224524_Chrome_f0ed3083.jpg`
+10. Metadata GitHub terverifikasi pada branch `main` (Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a` serta GitHub Compare `9e64039...918d365`).
 11. Seluruh dokumen Mode A terdahulu: `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md` & `docs/audit-mode-a/00..09`.
 
 ---
@@ -90,7 +91,7 @@ Seluruh penyuntingan terbatas **100%** di dalam dokumen audit Mode A (**11 file 
 | 8 | `docs/audit-mode-a/07_ACCESSIBILITY_RESPONSIVE_QA.md` | Dimodifikasi | Diselaraskan Bagian 1 & 2 dengan `NOD-02` (oranye `#20211F`/`#FF5A1F`, `--blue` dark mode berbasis kategori SC `1.4.11` vs `1.4.3`, penghapusan klaim runtime palsu — seluruh uji browser tetap `NOT RUN`). |
 | 9 | `docs/audit-mode-a/08_DECISION_LOG.md` | Dimodifikasi | Ditetapkan final `DL-01..13`, dipindahkan `NOD-05` & `NOD-06` ke `LOCKED DECISIONS`, dicatat `CD-01` (`NOD-04: CONDITIONAL`) & `CD-02` (`NOD-03B: DEFERRED`), dibersihkan Bagian 4 (`NEEDS OWNER DECISION` hanya menyisakan `NOD-01` + sign-off gate), dan dimutakhirkan Blocker Register (`BL-02/NOD-05`, `BL-04/NOD-06`). |
 | 10 | `docs/audit-mode-a/09_MODE_B_IMPLEMENTATION_PLAN.md` | Dimodifikasi | Ditambahkan Bagian 1 wajib **`MODE B NOT AUTHORIZED`** (6 gerbang), dipisahkan tegas **Temuan Audit vs Prasyarat vs Proposal Kerja (`PROPOSALS ONLY`) vs Proposal Baseline (`NOD-06`)**, dihapus klaim Fase 1 boleh jalan sambil menunggu `TRD v2`, serta dimasukkan koreksi `Moving Average` (`NOD-05`). |
-| 11 | `docs/audit-mode-a/10_FINAL_MODE_A_RECONCILIATION_REPORT.md` | **Dibuat Baru** | Dokumen paket rekonsiliasi final & persiapan Owner Sign-Off ini (14 bagian lengkap). |
+| 11 | `docs/audit-mode-a/10_FINAL_MODE_A_RECONCILIATION_REPORT.md` | **Dibuat Baru & Dikoreksi** | Dokumen paket rekonsiliasi final & persiapan Owner Sign-Off ini (14 bagian lengkap, termasuk *Final Forensic Report Accuracy Correction* untuk HEAD `2b1b352` dan compare `9e64039...918d365`). |
 | 12 | `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md` | Dimodifikasi | Ditambahkan banner rekonsiliasi Deliverable 8, diperbaiki path `src/engine/v1/*-preview.ts`, dan diselaraskan status Deliverable 3, 4, & 6 dengan tetap mempertahankan seluruh bukti forensik aslinya. |
 
 ---
@@ -131,7 +132,7 @@ Seluruh penyuntingan terbatas **100%** di dalam dokumen audit Mode A (**11 file 
 4. **`NOD-03B` (`Early Close` — `DEFERRED — EXCLUDED FROM INITIAL RELEASE`):** Tidak ada lagi status `NEEDS OWNER DECISION` untuk *Early Close*; seluruh dokumen menegaskan alur penutupan periode normal sebagai cakupan awal tanpa UI, kontrol, pengaturan, ataupun notifikasi *Early Close*.
 5. **`NOD-04` (Notification Bell — `CONDITIONAL — FUNCTIONAL VALUE REQUIRED`):** Disajikan secara seragam sebagai status **bersyarat**: hanya dipertahankan bila didukung antrean sync lokal nyata, kegagalan sync terkonfirmasi, atau peringatan stok aktual + aksi relevan (zero angka/status palsu), dan dikeluarkan dari rilis awal jika tidak ada sumber fungsional nyata.
 6. **`NOD-05` (`Inventory Costing` — `LOCKED — MOVING AVERAGE`):** Rekonsiliasi menyeluruh mencatat **Moving Average** sebagai aturan resmi dan menetapkan implementasi `Latest Unit Cost` (`calculate.ts`, `contract.ts`, `engineBridge.ts`, `App.tsx:1056–1061`, `golden-rumus-pemilik.test.ts:14–66, 298–340`) serta bug peleburan `unknownUnits` (`calculate.ts:141–143`) sebagai **deviasi implementasi & test**. Enam aturan integritas data tercantum di `08_DECISION_LOG.md` (`DL-12`), `01_SOURCE_OF_TRUTH_MATRIX.md` (`C-14`), & `09_MODE_B_IMPLEMENTATION_PLAN.md` (§3 Proposal 1.1). Tidak ada file `src/*`, `tests/*`, `01_PRD.md`, maupun `DECISION_REGISTER.md` yang disentuh.
-7. **`NOD-06` (`Git History & Baseline` — `LOCKED — PRESERVE HISTORY`):** Dihapus seluruh usulan `git revert`/`reset`; ditetapkan klasifikasi forensik selektif atas 27 file di `918d3656` serta strategi baseline & branch Mode B pada Bagian 9 laporan ini tanpa melakukan mutasi Git di Mode A.
+7. **`NOD-06` (`Git History & Baseline` — `LOCKED — PRESERVE HISTORY`):** Dihapus seluruh usulan `git revert`/`reset`; ditetapkan klasifikasi forensik selektif atas **25 file berubah** pada GitHub Compare `9e64039...918d365` (`12` dokumentasi audit, `12` file source/CSS/test/konfigurasi, `1` `.gitignore`, tanpa video MP4) dengan Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a`, serta strategi baseline & branch Mode B pada Bagian 9 tanpa melakukan mutasi Git di Mode A.
 
 ---
 
@@ -146,51 +147,54 @@ Ringkasan lengkap 10 blocker dari `08_DECISION_LOG.md` §5:
 - **`BL-02 / NOD-05` (Inventory Costing Critical):** Deviasi `Latest Unit Cost` & peleburan `unknownUnits` ke `knownUnits` (`calculate.ts:141–143`) di kode dan `golden-rumus-pemilik.test.ts`.
 - **`BL-03` (Reporting Critical):** Layar `Laporan` mengabaikan filter `Hari/Minggu/Bulan/Tahun` & anchor date (tetap merender `storeSummary`); `Beranda` belum pisah hari ini/periode/kumulatif.
 - **`DI-01..03` (Data Integrity High):** `parseRupiahInput("") -> 0` (`blank = 0`), `handleDeleteRecord` hard-delete tanpa `VOID` (`NOD-03`), `unit: 'pcs'` hardcoded, prefill dummy `showOtherIncomeModal`, & modul preview `src/engine/v1/*-preview.ts` terisolasi.
-- **`BL-04 / NOD-06` (Baseline Governance):** Commit campuran `918d3656` (27 file) menuntut review baseline Mode B & `.git` tidak tersedia di kontainer sandbox.
+- **`BL-04 / NOD-06` (Baseline Governance):** Commit campuran historis `918d36560660cd183f603f6ea72238a96f031796` (`"feat(engine): add discount support and sample data management"` — 25 file vs `9e64039`, Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a`) menuntut review baseline Mode B & `.git` tidak tersedia di kontainer sandbox.
 - **`QA-01` (Runtime QA Verification):** Uji Playwright Chromium `320–1440 px`, kontras render `NOD-02` (`#20211F`/`#FF5A1F` & `--blue` dark mode), keyboard `<div role="button">` (10 elemen), stepper `<44px` (`32×34px`), teks sub-12px (`229`), `axe-core`, zoom 200%, & reduced motion berstatus **`NOT RUN`**.
 
 ---
 
 ## 9. Git History & Baseline Findings (`NOD-06` — 6 Elemen Wajib)
 
-### 1. Commit Referensi (Pembanding)
-- **SHA:** `9e64039be553d0abecd56c07f7f9def57d596c1e` (branch `main` di `adizseptian/TOKO-SAKALA`, sesuai arahan Deliverable 7).
+### 1. Commit Referensi, Objek Audit Historis & Current HEAD
+- **Current Repository HEAD (`main`):** `2b1b352de4ebc6446fa5dc8ad469c357c657567a` (`2b1b352`).
+- **Reference Audit Commit (Objek Audit Historis):** `918d36560660cd183f603f6ea72238a96f031796` (`918d365`).
+- **Baseline Commit (Pembanding):** `9e64039be553d0abecd56c07f7f9def57d596c1e` (`9e64039`).
 
-### 2. Perubahan Relevan yang Diperkenalkan oleh Commit `918d3656`
-Berdasarkan audit Deliverable 7 & bukti panel *GitHub sync* Owner (`Screenshot_20261113_224524_Chrome_f0ed3083.jpg`), commit **`918d36560660cd183f603f6ea72238a96f031796`** (`chore: add UI/UX audit documentation`) memuat **27 perubahan file**:
-- **12 File Dokumentasi & Instruksi Audit:**
-  - `TOKO_SAKALA_MODE_A_AUDIT_AND_PROMPT (1).md` `[Added]`
-  - `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md` `[Added]`
-  - `docs/audit-mode-a/00_AUDIT_EXECUTIVE_SUMMARY.md` s.d. `09_MODE_B_IMPLEMENTATION_PLAN.md` (`10 file`) `[Added]`
-- **12 File Kode Aplikasi, CSS, Storage, Test & Konfigurasi:**
-  - `src/App.tsx` `[Modified]`, `src/styles.css` `[Modified]`, `src/engine/v1/engineBridge.ts` `[Modified]`
-  - `src/storage/index.ts` `[Modified]`, `src/storage/mockStorageAdapter.ts` `[Modified]`, `src/storage/sampleData.ts` `[Added]`, `src/storage/storageAdapter.ts` `[Modified]`, `src/storage/types.ts` `[Modified]`
-  - `tests/engine/acceptance-prompt.test.ts` `[Modified]`, `tests/engine/golden-rumus-pemilik.test.ts` `[Modified]`, `tests/golden/sample-week.test.ts` `[Added]`
-  - `vite.config.ts` `[Modified]`
-- **3 File Media Asset:**
-  - `public/assets/aistudio/Screen_Recording_2026-11-13_150730_ba8f9e5d.mp4` `[Added]`
-  - `public/assets/aistudio/Screen_Recording_20261112_182018_Chrome_a52afc8f.mp4` `[Added]`
-  - `public/assets/aistudio/Screen_Recording_20261112_193249_Chrome_5fab5b74.mp4` `[Added]`
+### 2. Perubahan Relevan yang Diperkenalkan oleh Commit `918d365` (GitHub Compare `9e64039...918d365`)
+Berdasarkan hasil perbandingan terverifikasi di GitHub (`9e64039...918d365`), commit **`918d36560660cd183f603f6ea72238a96f031796`** berjudul **`"feat(engine): add discount support and sample data management"`** dan memuat tepat **25 file berubah** (bukan `27 file`, dan judul sebelumnya `chore: add UI/UX audit documentation` dikoreksi karena tidak sesuai metadata GitHub aktual):
 
-### 3. Klasifikasi Forensik Selektif & Rasional
-| Kelompok Perubahan | Daftar File | Klasifikasi Forensik | Rasional & Status |
+- **12 File Dokumentasi Audit:**
+  - `TOKO_SAKALA_MODE_A_AUDIT_AND_PROMPT (1).md`
+  - `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md`
+  - `docs/audit-mode-a/00_AUDIT_EXECUTIVE_SUMMARY.md` s.d. `09_MODE_B_IMPLEMENTATION_PLAN.md` (`10 file`)
+- **12 File Source / CSS / Test / Konfigurasi:**
+  - `src/App.tsx`, `src/styles.css`, `src/engine/v1/engineBridge.ts`
+  - `src/storage/index.ts`, `src/storage/mockStorageAdapter.ts`, `src/storage/sampleData.ts`, `src/storage/storageAdapter.ts`, `src/storage/types.ts`
+  - `tests/engine/acceptance-prompt.test.ts`, `tests/engine/golden-rumus-pemilik.test.ts`, `tests/golden/sample-week.test.ts`
+  - `vite.config.ts`
+- **1 File Konfigurasi Git:**
+  - `.gitignore`
+
+*(Catatan Koreksi Faktual: Klaim sebelumnya mengenai 3 file video MP4 telah dihapus seluruhnya karena ketiga video MP4 tersebut tidak terdapat dalam hasil GitHub Compare `9e64039...918d365` dan tidak ditambahkan oleh commit `918d365`.)*
+
+### 3. Klasifikasi Forensik Selektif & Rasional (25 File Terverifikasi)
+| Kelompok Perubahan | Jumlah & Daftar File | Klasifikasi Forensik | Rasional & Status |
 |---|---|---|---|
-| **A. Artefak Audit Mode A Resmi** | `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md`, `docs/audit-mode-a/00..09`, `TOKO_SAKALA_MODE_A_AUDIT_AND_PROMPT (1).md` | **LEGITIMATE MODE A DELIVERABLE *(Direkonsiliasi di Deliverable 8)*** | Menghasilkan dokumentasi audit read-only sesuai mandat Mode A; bagian yang sempat belum sinkron dengan Owner Final Decisions telah dikoreksi di Deliverable 8 & Dokumen 10. |
-| **B. Bukti Video Inspeksi UI** | `public/assets/aistudio/Screen_Recording_*.mp4` (`3 file`) | **SUPPORTING EVIDENCE / HEAVY BINARY ARTIFACT *(Perlu Keputusan Kebersihan Repo saat Mode B)*** | Berguna sebagai jejak rekaman visual saat Mode A, tetapi bukan bagian kode aplikasi produksi; perlu dievaluasi apakah dipertahankan sebagai arsip atau dikeluarkan dari bundle statis produksi. |
-| **C. Perubahan Test & Sample Data** | `tests/engine/acceptance-prompt.test.ts`, `tests/engine/golden-rumus-pemilik.test.ts`, `tests/golden/sample-week.test.ts`, `src/storage/sampleData.ts` | **REQUIRES TECHNICAL CORRECTION *(Mengunci Rumus Salah)* — OUT-OF-SCOPE MODE A** | Diperkenalkan bersama commit audit tanpa otorisasi Mode B. Selain itu, `golden-rumus-pemilik.test.ts` & `sample-week.test.ts` mengunci perilaku `Latest Unit Cost` (`NOD-05`) dan definisi P&L `BL-01` yang menyimpang dari PRD/DR-016, serta `sampleData` belum terisolasi dari cloud sync. |
-| **D. Mutasi Source Code, CSS, Storage & Build Config** | `src/App.tsx`, `src/styles.css`, `src/engine/v1/engineBridge.ts`, `src/storage/{index,mockStorageAdapter,storageAdapter,types}.ts`, `vite.config.ts` | **UNAUTHORIZED / OUT-OF-SCOPE CHANGES IN MODE A & REQUIRES TECHNICAL CORRECTION** | Commit berjudul `chore: add UI/UX audit documentation` seharusnya read-only terhadap kode, namun menyentuh aplikasi, styling, storage, engine bridge, dan build config tanpa otorisasi Mode B. Isinya tetap harus diaudit/dikoreksi di branch Mode B (mis. P&L 9 langkah, Moving Average `NOD-05`, G4 solid dock `DL-06`, isolasi sandbox `DL-04`), tanpa menghapus sejarah commit `918d3656`. |
+| **A. Artefak Audit Mode A Resmi** | **12 file:** `docs/audit/MODE_A_DOCUMENT_INGESTION_REPORT.md`, `docs/audit-mode-a/00..09`, `TOKO_SAKALA_MODE_A_AUDIT_AND_PROMPT (1).md` | **LEGITIMATE MODE A DELIVERABLE *(Direkonsiliasi di Deliverable 8)*** | Dokumentasi audit read-only sesuai mandat Mode A; bagian yang sempat belum sinkron dengan Owner Final Decisions telah dikoreksi di Deliverable 8 & Dokumen 10. |
+| **B. Kebersihan Repositori (`.gitignore`)** | **1 file:** `.gitignore` | **SUPPORTING REPO HYGIENE / OUT-OF-SCOPE MODE A *(Perlu Review Diff Saat Mode B)*** | Tercatat pada GitHub Compare `9e64039...918d365`. Karena `.git` tidak tersedia di sandbox kontainer ini, isi diff baris-per-baris belum diverifikasi lokal — tandai untuk review diff pada repositori Git penuh saat Mode B dibuka. |
+| **C. Perubahan Test & Sample Data** | **4 file:** `tests/engine/acceptance-prompt.test.ts`, `tests/engine/golden-rumus-pemilik.test.ts`, `tests/golden/sample-week.test.ts`, `src/storage/sampleData.ts` | **REQUIRES TECHNICAL CORRECTION *(Mengunci Rumus Salah)* — OUT-OF-SCOPE MODE A** | Diperkenalkan dalam commit `918d365` (`"feat(engine): add discount support and sample data management"`) sebelum kunci penuh aturan Mode A. `golden-rumus-pemilik.test.ts` & `sample-week.test.ts` mengunci `Latest Unit Cost` (`NOD-05`) serta definisi P&L `BL-01` yang menyimpang dari PRD/DR-016, sedangkan `sampleData` belum terisolasi dari cloud sync. |
+| **D. Mutasi Source Code, CSS, Storage & Build Config** | **8 file:** `src/App.tsx`, `src/styles.css`, `src/engine/v1/engineBridge.ts`, `src/storage/{index,mockStorageAdapter,storageAdapter,types}.ts`, `vite.config.ts` | **UNAUTHORIZED FOR MODE A / PRE-SIGN-OFF IMPLEMENTATION & REQUIRES TECHNICAL CORRECTION** | Berasal dari commit fitur historis `"feat(engine): add discount support and sample data management"` (`918d365`), bukan commit murni dokumentasi. Isinya tetap harus diaudit & dikoreksi eksplisit di branch Mode B agar mematuhi P&L 9 langkah (`DL-01`), **Moving Average** (`NOD-05`), G4 solid dock (`DL-06`), & isolasi sandbox (`DL-04`), tanpa menghapus sejarah commit `918d365`. |
 
 ### 4. Risiko yang Masih Tersisa (*Outstanding Risks*)
 1. **Golden Test Palsu-Hijau (*False Green*):** `npx vitest run` (`85 tests`) saat ini lulus bukan karena logika sesuai PRD, melainkan karena `golden-rumus-pemilik.test.ts` & `sample-week.test.ts` mengodekan ekspektasi `Latest Unit Cost` & formula P&L yang menyimpang (`BL-01`, `NOD-05`).
-2. **Riwayat Commit Campuran:** Commit `918d3656` menyatukan 12 dokumen audit dengan 12 perubahan kode/test/config dan 3 video besar, sehingga sulit dipisahkan tanpa triage per-file pada saat Mode B.
-3. **Absennya `.git` di Snapshot Kontainer (`/app/applet`):** Audit forensik baris-per-baris git diff antara `9e64039` dan `918d3656` tidak dapat diverifikasi langsung dari filesystem kontainer ini, melainkan bersandar pada log Deliverable 7 & daftar file *GitHub sync*.
+2. **Riwayat Commit Campuran:** Commit `918d365` menyatukan `12` dokumen audit dengan `12` perubahan source/CSS/test/konfigurasi dan `1` `.gitignore` (`25` file total), sehingga menuntut inspeksi diff per-file saat transisi ke Mode B.
+3. **Absennya `.git` di Snapshot Kontainer (`/app/applet`):** Audit forensik baris-per-baris git diff antara `9e64039`, `918d365`, dan HEAD `2b1b352` tidak dapat dieksekusi langsung dari kontainer ini, sehingga metadata file & SHA bersandar pada hasil verifikasi GitHub Compare `9e64039...918d365` dan HEAD `2b1b352`.
 
 ### 5. Proposal Titik Awal & Strategi Branch Mode B *(Usulan — Belum Dieksekusi)*
-- **Kebijakan History:** **Pertahankan penuh `918d3656` dan seluruh commit sebelumnya di `main`** (`0` reset, `0` rewrite/rebase history, `0` force-push, `0` revert otomatis).
+- **Kebijakan History:** **Pertahankan penuh seluruh riwayat commit pada `main` hingga Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a` termasuk commit historis `918d36560660cd183f603f6ea72238a96f031796`** (`0` reset, `0` rewrite/rebase history, `0` force-push, `0` revert otomatis).
 - **Titik Awal Mode B yang Diusulkan:**
-  1. Setelah paket rekonsiliasi Mode A (termasuk Dokumen 10) disinkronkan dan disetujui Owner, tandai posisi akhir Mode A dengan **annotated tag referensi** (mis. `mode-a-signoff-v1`).
-  2. Ketika Owner menerbitkan `TRD v2` dan otorisasi tertulis Mode B, buat **branch kerja terisolasi baru** (mis. `mode-b/phase-1-trd-v2-and-core-fixes`) dari titik sign-off Mode A tersebut — bukan bekerja membabi buta langsung di `main`.
-  3. Di dalam branch Mode B baru tersebut, lakukan inspeksi `git diff 9e64039..918d3656 -- <file>` pada repositori Git penuh untuk memverifikasi tiap baris di kelompok C & D, menerapkan perbaikan eksplisit (`NOD-05` Moving Average, P&L 9 langkah, `NOD-03` VOID, `DL-06` G4 dock, `TRD v2` RLS/RPC), serta memperbarui golden tests sebelum merge via Pull Request yang direview Owner.
+  1. Setelah paket rekonsiliasi Mode A final disinkronkan dan disetujui Owner di `main` (pasca-HEAD `2b1b352`), tandai titik akhir Mode A dengan **annotated tag referensi** (mis. `mode-a-signoff-v1`).
+  2. Ketika Owner menerbitkan `TRD v2` dan otorisasi tertulis Mode B, buat **branch kerja terisolasi baru** (mis. `mode-b/phase-1-trd-v2-and-core-fixes`) dari titik sign-off Mode A tersebut — tidak bekerja langsung di `main`.
+  3. Di dalam branch Mode B baru tersebut, lakukan inspeksi `git diff 9e64039..918d365 -- <file>` dan `git diff 918d365..HEAD -- <file>` pada repositori Git penuh untuk memverifikasi tiap baris di kelompok B, C, & D, menerapkan perbaikan eksplisit (`NOD-05` Moving Average, P&L 9 langkah, `NOD-03` VOID, `DL-06` G4 dock, `TRD v2` RLS/RPC), serta memperbarui golden tests sebelum merge via Pull Request yang direview Owner.
 
 ### 6. Syarat Otorisasi Owner Terpisah
 **Mode B belum dimulai.** Baik penentuan akhir baseline branch dari titik sign-off maupun setiap eksekusi cabang/perbaikan pada kode/test/SQL wajib menunggu: (a) Review & Sign-Off Owner atas klasifikasi selektif pada bagian ini, (b) Tersedianya `TRD v2`, dan (c) **Otorisasi eksplisit terpisah untuk Mode B**.
@@ -234,14 +238,15 @@ Seluruh perubahan file pada tugas Deliverable 8 hanya berada pada jalur dokument
 ## 12. Diff & Verification Evidence
 
 ### A. Status Verifikasi Git Diff (`NO_DOT_GIT_IN_WORKSPACE`)
-- **Kondisi Lingkungan:** Direktori `.git` tidak terdapat pada salinan workspace `/app/applet`. Oleh karena itu `git status` dan `git diff --name-only` **tidak dapat dijalankan** secara lokal.
-- **Bukti Alternatif yang Diverifikasi:** Sebelum penyuntingan Deliverable 8, timestamp modifikasi maksimum seluruh berkas proyek dicatat pada epoch baseline `1794613824` (`2026-11-13 23:50:24 UTC`). Setelah seluruh pengeditan dan pembuatan Dokumen 10 selesai, pemeriksaan filesystem (`find . -not -path '*/node_modules*' -not -path '*/.aistudio*' -type f -printf "%T@ %p\n" | awk '$1 > 1794613825'`) mengonfirmasi bahwa **hanya 12 file** yang tercantum pada Bagian 11 yang memiliki mtime pasca-baseline (`0` file kode, CSS, test, SQL, konfigurasi, maupun dokumen otoritatif asli yang tersentuh).
+- **Kondisi Lingkungan:** Direktori `.git` tidak terdapat pada salinan workspace `/app/applet`. Oleh karena itu `git status`, `git diff --name-only`, maupun pembuatan commit Git baru **tidak dapat dijalankan secara lokal** di kontainer sandbox ini (`NO_NEW_LOCAL_COMMIT_SHA`).
+- **Bukti Alternatif yang Diverifikasi:** Sebelum rangkaian penyuntingan Deliverable 8 dan koreksi akurasi forensik, pemeriksaan timestamp mtime filesystem (`find . -not -path '*/node_modules*' -not -path '*/.aistudio*' -type f -printf "%T@ %p\n"`) memastikan bahwa **hanya 12 file dokumentasi audit** pada Bagian 11 yang mengalami modifikasi/pembuatan (`0` file kode, CSS, test, SQL, konfigurasi, maupun dokumen otoritatif asli yang tersentuh).
 
 ### B. Pemeriksaan Konsistensi Lintas Dokumen
 - Pemindaian teks otomatis (`grep -rnE`) atas seluruh `docs/audit-mode-a/` dan `docs/audit/` mengonfirmasi:
   - Tidak ada lagi usulan token `#B8370B` maupun penggantian global `--blue` (`#7CA0FF` / `#254EDB`) — kecuali catatan eksplisit bahwa usulan `#B8370B` telah dicabut.
   - Tidak ada lagi path keliru `src/domain/stock-check-preview.ts` maupun `src/domain/purchase-preview.ts`.
   - Tidak ada lagi status `NEEDS OWNER DECISION` yang tertinggal pada `NOD-03B`, `NOD-05`, maupun `NOD-06`, dan tidak ada lagi pernyataan bahwa Fase 1 lokal boleh dimulai sebelum `TRD v2` & otorisasi Mode B.
+  - Metadata Git pada seluruh dokumen audit konsisten memakai Current HEAD `2b1b352de4ebc6446fa5dc8ad469c357c657567a` (`2b1b352`), objek audit historis `918d36560660cd183f603f6ea72238a96f031796` (`"feat(engine): add discount support and sample data management"`), baseline `9e64039be553d0abecd56c07f7f9def57d596c1e`, dan **25 file berubah** pada GitHub Compare `9e64039...918d365` tanpa klaim video MP4.
 
 ---
 
@@ -250,13 +255,13 @@ Seluruh perubahan file pada tugas Deliverable 8 hanya berada pada jalur dokument
 1. **`TRD v2` Absen dari Workspace (`NOD-01`):** Kontrak arsitektur Cloudflare Workers Static Assets, Supabase Edge Functions, RPC, dan tabel target resmi masih belum dapat diverifikasi dari berkas lokal (`NOT VERIFIED`).
 2. **Browser Runtime QA & Pengukuran Kontras Aktual (`QA-01`, `NOD-02`):** Biner Chromium tidak terpasang di kontainer sandbox sehingga pengukuran DOM pada 7 breakpoint (`320–1440 px`), rasio aktual `#20211F` on `#FF5A1F`, audit computed color `--blue` dark mode (`3.0:1` vs `4.5:1`), fokus trap modal, keyboard nav, zoom 200%, reduced motion, dan tangkapan layar tetap berstatus **`NOT RUN`**.
 3. **Line-by-Line Audit Modal `App.tsx:5751–6950`:** Pemetaan handler, state, dan ketidaksesuaian utama seluruh 19 modal/sheet sudah lengkap pada `02_SCREEN_INVENTORY.md` §3, tetapi inspeksi baris per baris atas area pengaya Pengaturan/SQL inline masih tercatat sebagai temuan awal yang akan dituntaskan saat refactor `ModalForm` di Mode B.
-4. **Live Cloud & Git Metadata Lokal:** Pengujian live RLS Supabase terhadap instance cloud (`dvznpniodskujfbdznnv.supabase.co`) tidak dilakukan dalam Mode A; verifikasi diff Git penuh atas `9e64039..918d3656` perlu dijalankan pada lingkungan yang memiliki repositori `.git` utuh saat review baseline oleh Owner.
+4. **Live Cloud & Git Metadata Lokal:** Pengujian live RLS Supabase terhadap instance cloud (`dvznpniodskujfbdznnv.supabase.co`) tidak dilakukan dalam Mode A; verifikasi diff Git penuh atas `9e64039..918d365` dan `918d365..2b1b352` perlu dijalankan pada lingkungan yang memiliki repositori `.git` utuh saat review baseline oleh Owner.
 
 ---
 
 ## 14. Final Sign-Off Recommendation
 
-Berdasarkan konsistensi penuh seluruh 12 dokumen audit terhadap keputusan Owner (`DL-01..09`, `NOD-01..06`, `NOD-03B`), terpeliharanya 100% kejujuran pembuktian tanpa modifikasi kode ataupun riwayat Git, serta tersedianya klasifikasi forensik `918d3656` dan daftar lengkap gerbang implementasi:
+Berdasarkan konsistensi penuh seluruh 12 dokumen audit terhadap keputusan Owner (`DL-01..09`, `NOD-01..06`, `NOD-03B`), terpeliharanya 100% kejujuran pembuktian tanpa modifikasi kode ataupun riwayat Git, serta tersedianya klasifikasi forensik akurat atas commit `918d365` (25 file pada GitHub Compare `9e64039...918d365`) dan HEAD `2b1b352`:
 
 - **Outcome Paket Mode A:** **`READY FOR OWNER SIGN-OFF`**
 - **Status Implementasi Mode B:** **`MODE B: NOT AUTHORIZED`**
